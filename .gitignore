@@ -34,4 +34,5 @@
 # output files
 assets/out/
 !assets/out/.gitkeep
-build/
+build/apps/
+build/objects/
