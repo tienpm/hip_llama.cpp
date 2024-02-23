@@ -1,6 +1,6 @@
 CXX      := hipcc
 CXXFLAGS := -Wall -std=c++17 --offload-arch=gfx908 # -Wextra -Werror -pedantic-errors
-LDFLAGS  := -L/usr/lib -lstdc++ -lm
+LDFLAGS  := -L/usr/lib -lstdc++ -lm -fopenmp
 BUILD    := ./build
 OBJ_DIR  := $(BUILD)/objects
 APP_DIR  := $(BUILD)/apps
