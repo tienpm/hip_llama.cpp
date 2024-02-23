@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+# output files
+assets/out/
+!assets/out/.gitkeep
+build/apps/
+build/objects/
