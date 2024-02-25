@@ -118,3 +118,5 @@ thablasStatus_t thablas_c2d_Sgemm(int m, int n, int k, float* A, float* B, float
 
     ********************************************************************/
 thablasStatus_t thablas_Sgemm(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
+
+
