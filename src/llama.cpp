@@ -200,7 +200,6 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     ss += x[j] * x[j];
   }
   ss /= size;
-
   ss += 1e-5f;
   ss = 1.0f / sqrtf(ss);
   // normalize and scale
