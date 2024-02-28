@@ -118,6 +118,13 @@ thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_n
         CHECK_HIP(hipDeviceSynchronize());
     }
 
+    for(int gid = 0 ; gid < num_gpus ; ++gid)
+    {
+        CHECK_HIP(hipSetDevice(gid));
+        CHECK_HIP(hipFree(A_gpu[gid]));
+        CHECK_HIP(hipFree(B_gpu[gid]));
+    }
+
     return THABLAS_STATUS_SUCCESS;
 }
 
@@ -133,7 +140,7 @@ thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_n
  * ===========================================================================
  */
 
-__global__ void thablas_Sgemm_kernel(int M, int N,int K, float *A, float *B, float *C)
+__global__ void thaBLAS_s_matmul_kernel(int M, int N,int K, float *A, float *B, float *C)
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int i = blockIdx.y * blockDim.y + threadIdx.y;
@@ -153,7 +160,9 @@ __global__ void thablas_Sgemm_kernel(int M, int N,int K, float *A, float *B, flo
     C[i*N + j] = sum;
 }
 
-thablasStatus_t thablas_Sgemm(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C)
+// _s_ = single percision
+// all input are allocated on device
+thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C)
 {
     if (m==0 || n==0 || k==0 || A == nullptr || B == nullptr || C == nullptr || handle.current_gpu_id < 0)
     {
@@ -165,13 +174,16 @@ thablasStatus_t thablas_Sgemm(thablasHandle_t handle, int m, int n, int k, float
     dim3 blockDim(GEMM_BLOCK_DIM_X, GEMM_BLOCK_DIM_Y);
     dim3 gridDim((n + GEMM_BLOCK_DIM_X - 1) / GEMM_BLOCK_DIM_X, (m + GEMM_BLOCK_DIM_Y - 1) / GEMM_BLOCK_DIM_Y);
 
-    hipLaunchKernelGGL(thablas_Sgemm_kernel, gridDim, blockDim, 0, 0, m, n, k, A, B, C);
+    hipLaunchKernelGGL(thaBLAS_s_matmul_kernel, gridDim, blockDim, 0, 0, m, n, k, A, B, C);
     CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
 }
 
-thablasStatus_t thablas_c2d_Sgemm(int m, int n, int k, float* A, float* B, float* C, int max_num_gpus = MAX_NUM_SUPPORTED_GPUS)
+// _s_ = single percision
+// _h2d_ = host to device
+// all input are allocated on host
+thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, float* C, int max_num_gpus = MAX_NUM_SUPPORTED_GPUS)
 {
     if (m==0 || n==0 || k==0 || A == nullptr || B == nullptr || C == nullptr || max_num_gpus < 1)
     {
@@ -227,7 +239,7 @@ thablasStatus_t thablas_c2d_Sgemm(int m, int n, int k, float* A, float* B, float
 
         thablasHandle_t handle;
         thablasCreate(&handle);
-        thablasStatus_t status = thablas_Sgemm(handle, g_m[gid], n, k, A_gpu[gid], B_gpu[gid], C_gpu[gid]);
+        thablasStatus_t status = thaBLAS_s_matmul(handle, g_m[gid], n, k, A_gpu[gid], B_gpu[gid], C_gpu[gid]);
         if (status != THABLAS_STATUS_SUCCESS) {
             printf("THABLAS ERROR: ERROR on Device %d\n", gid); fflush(stdout);
         }
@@ -240,6 +252,10 @@ thablasStatus_t thablas_c2d_Sgemm(int m, int n, int k, float* A, float* B, float
         CHECK_HIP(hipMemcpy(C + C_offset, C_gpu[gid], g_m[gid] * n * sizeof(float), hipMemcpyDeviceToHost));
 
         CHECK_HIP(hipDeviceSynchronize());
+
+        CHECK_HIP(hipFree(A_gpu[gid]));
+        CHECK_HIP(hipFree(B_gpu[gid]));
+        CHECK_HIP(hipFree(C_gpu[gid]));
     }
 
     return THABLAS_STATUS_SUCCESS;
