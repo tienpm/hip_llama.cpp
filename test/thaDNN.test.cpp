@@ -73,11 +73,11 @@ int main()
 {
   bool all_valid = 1;
 
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768)); // 768 only
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768)); // 768 only
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4096));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768)); // 768 only
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(5120));
   assert(all_valid);
   printf("RMSNORM PASSED\n");
 

@@ -22,41 +22,39 @@
 //   }
 // }
 
-#define RMSNORM_BLOCK_SIZE 768
+#define RMSNORM_BLOCK_SIZE 1024
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
 {
     int j = threadIdx.x;
-    float xj = x[j];
-    float ss = xj;
-    ss = ss * ss;
-
-    __shared__ float local_s[RMSNORM_BLOCK_SIZE];
-    local_s[j] = ss;
-    __syncthreads();
-
-    // 768 = 8 * 8 * 12
-    ss = 0;
-    if (j%8==0)
+    int j_pos = j * 8;
+    if (j_pos >= size) return;
+    // 768  = 8 * 16 * 6
+    // 4096 = 8 * 16 * 32
+    // 5120 = 8 * 16 * 40
+    __shared__ float local_s[5120];
+    float local_x[8];
+    float ss = 0;
+    for(int i=0 ; i<8 ; ++i)
     {
-        for(int i=j ; i<j+8; ++i)
+        local_x[i] = x[j_pos+i];
+        ss += local_x[i] * local_x[i];
+    }
+    local_s[j_pos] = ss;
+    __syncthreads();
+    
+    ss = 0;
+    if (j_pos%128==0) // 8 * 16 = 128
+    {
+        for(int i=j_pos ; i<j_pos+128; i+=8)
             ss += local_s[i];
-        local_s[j] = ss;
+        local_s[j_pos] = ss;
     }
     __syncthreads();
 
     ss = 0;
-    if (j%64==0) // 8 * 8
+    if (j_pos==0)
     {
-        for(int i=j ; i<j+64; i+=8)
-            ss += local_s[i];
-        local_s[j] = ss;
-    }
-    __syncthreads();
-
-    ss = 0;
-    if (j==0)
-    {
-        for(int i=0 ; i<size; i+=64)
+        for(int i=0 ; i<size; i+=128)
             ss += local_s[i];
         ss /= size;
         ss += 1e-5f;
@@ -66,12 +64,15 @@ __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int s
     __syncthreads();
 
     ss = local_s[0];
-    o[j] = weight[j] * (ss * xj);
+    for(int i=0 ; i<8 ; ++i)
+    {
+        o[j_pos + i] = weight[j_pos + i] * (ss * local_x[i]);
+    }
 }
 
 // '_s_' = single persion (float)
 // input: o, x, weight allocated on device
-// input: size = 768 = 256 * 3
+// input: size = (768/4096/5120)
 thablasStatus_t thaDNN_s_rmsnorm(thablasHandle_t handle, float* o, float* x, float* weight, int size) 
 {
     if (size==0 || o == nullptr || x == nullptr || weight == nullptr || handle.current_gpu_id < 0)
@@ -81,7 +82,7 @@ thablasStatus_t thaDNN_s_rmsnorm(thablasHandle_t handle, float* o, float* x, flo
     }
 
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(RMSNORM_BLOCK_SIZE);
+    dim3 blockDim(size / 8);
     dim3 gridDim(1);
     // dim3 gridSize((size + RMSNORM_BLOCK_SIZE - 1) / RMSNORM_BLOCK_SIZE);
     hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel, gridDim, blockDim, 0, 0, o, x, weight, size);
