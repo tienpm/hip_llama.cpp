@@ -131,8 +131,11 @@ bool thablas_c2d_Svds_test(int n, int num_gpus_to_test)
 
 
 
+
+
 int main()
 {
+
   bool all_valid = 1;
 
   all_valid = std::min(all_valid, thablas_c2d_Sgemm_test(3, 3, 3, 2));

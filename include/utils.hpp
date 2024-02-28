@@ -67,3 +67,4 @@ bool compareFiles(const std::string& filePath1, const std::string& filePath2) {
 
     return true; 
 }
+
