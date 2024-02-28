@@ -453,7 +453,6 @@ thablasStatus_t thablas_c2d_Ssum(float* vector_in, int vector_size, float &sum_r
         sum_result_gpu[gid] = sum_result;
 
         CHECK_HIP(hipDeviceSynchronize());
-
     }
 
-kiểm tra lại cái hàm cuối này, hip ko dùng được ở bên kia 
+
