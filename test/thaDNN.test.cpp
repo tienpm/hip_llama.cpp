@@ -58,6 +58,11 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
     }
   }
 
+  util_free((void*)x);
+  util_free((void*)o);
+  util_free((void*)weight);
+  util_free((void *)o_h);
+
   if (is_valid) {
     printf("Validation: VALID\n"); fflush(stdout);
     return 1;
@@ -73,11 +78,25 @@ int main()
 {
   bool all_valid = 1;
 
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(512));
+  assert(all_valid);
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768));
   assert(all_valid);
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4096));
   assert(all_valid);
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(5120));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(8192));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(31));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1000));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4000));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(16384));
   assert(all_valid);
   printf("RMSNORM PASSED\n");
 
