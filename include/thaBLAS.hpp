@@ -91,7 +91,7 @@ thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_n
     max_num_gpus maximum number of GPU will be used
 
     ********************************************************************/
-thablasStatus_t thablas_c2d_Sgemm(int m, int n, int k, float* A, float* B, float* C, int max_num_gpus);
+thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, float* C, int max_num_gpus);
 
 /*! @{
     \brief BLAS Level 3 API
@@ -117,4 +117,4 @@ thablasStatus_t thablas_c2d_Sgemm(int m, int n, int k, float* A, float* B, float
     C         pointer storing matrix C accessible from device.
 
     ********************************************************************/
-thablasStatus_t thablas_Sgemm(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
+thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
