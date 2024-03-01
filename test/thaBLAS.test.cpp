@@ -3,6 +3,7 @@
 #include "utils.hpp"
 
 #include <assert.h>
+#include <hipblas.h>
 
 
 bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
@@ -51,6 +52,11 @@ bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
   //   printf("\n");
   // }
   // printf("\n"); fflush(stdout);
+
+  util_free((void*)A);
+  util_free((void*)B);
+  util_free((void*)C);
+  util_free((void*)C_ans);
 
   if (is_valid) {
     printf("Validation: VALID\n");  fflush(stdout);
@@ -119,6 +125,10 @@ bool thablas_c2d_Svds_test(int n, int num_gpus_to_test)
       is_valid = false;
     }
   }
+
+  util_free((void*)A);
+  util_free((void*)B);
+  util_free((void*)B_ans);
 
   if (is_valid) {
     printf("Validation: VALID\n");
