@@ -5,6 +5,10 @@
 
 #include <assert.h>
 
+#include <chrono>
+
+using namespace std;
+
 // copied from original CPU code
 void cpu_rmsnorm(float* o, float* x, float* weight, int size) {
   // calculate sum of squares
@@ -104,7 +108,13 @@ bool test_thaDNN_h2d_s_softmax(int size)
   rand_vec(x, size);
   zero_vec(o, size);
 
+  // run on gpu 
+  auto start_gpu = chrono::high_resolution_clock::now();
   thablasStatus_t thablasStatus = thaDNN_h2d_s_softmax(o, x, size);
+  auto end_gpu = chrono::high_resolution_clock::now();
+  auto duration_gpu = chrono::duration_cast<chrono::microseconds>(end_gpu - start_gpu);
+
+
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
       return 0;
 
@@ -112,11 +122,19 @@ bool test_thaDNN_h2d_s_softmax(int size)
   alloc_vec(&o_h, size);
   zero_vec(o_h, size);
   memcpy(o_h, x, size * sizeof(float));
+  
+  auto start_cpu = chrono::high_resolution_clock::now();
   softmax(o_h, size);
+  auto end_cpu = chrono::high_resolution_clock::now();
+  auto duration_cpu = chrono::duration_cast<chrono::microseconds>(end_cpu - start_cpu);
+  
+  // print time with 10 decimal places
+  printf("GPU time: %.10f\n", duration_gpu.count() / 1000000.0);
+  printf("CPU time: %.10f\n", duration_cpu.count() / 1000000.0);
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
-  float eps = 1e-3;
+  float eps = 1e-4;
   for (int i = 0; i < size; ++i) {
     float o_gpu = o[i];
     float o_ans = o_h[i];
