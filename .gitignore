@@ -36,3 +36,9 @@ assets/out/
 !assets/out/.gitkeep
 build/apps/
 build/objects/
+
+# ingored files binary
+*.png
+*.jpg
+*.jpeg
+
