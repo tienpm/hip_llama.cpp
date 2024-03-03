@@ -12,11 +12,18 @@
 
 void alloc_mat(float **m, int R, int C) {
   // *m = (float *)aligned_alloc(32, sizeof(float) * R * C);
+  // ---!!! CAUTION !!!--- Remember to replace hipFree with free
   CHECK_HIP(hipHostMalloc(m, R * C * sizeof(float)));
   if (*m == NULL) {
     printf("Failed to allocate memory for matrix.\n");
     exit(0);
   }
+}
+
+void util_free(void *m)
+{
+  // free(m);
+  CHECK_HIP(hipFree(m));
 }
 
 void alloc_vec(float **m, int N) {

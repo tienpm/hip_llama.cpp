@@ -3,6 +3,7 @@
 #include "utils.hpp"
 
 #include <assert.h>
+#include <hipblas.h>
 
 
 bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
@@ -52,6 +53,11 @@ bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
   // }
   // printf("\n"); fflush(stdout);
 
+  util_free((void*)A);
+  util_free((void*)B);
+  util_free((void*)C);
+  util_free((void*)C_ans);
+
   if (is_valid) {
     printf("Validation: VALID\n");  fflush(stdout);
     return 1;
@@ -61,7 +67,7 @@ bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
   }
 }
 
-bool thablas_c2d_Sgemm_test(int M, int N, int K, int num_gpus_to_test)
+bool test_thaBLAS_h2d_s_matmul(int M, int N, int K, int num_gpus_to_test)
 {
   float *A, *B, *C;
   alloc_mat(&A, M, K);
@@ -71,7 +77,7 @@ bool thablas_c2d_Sgemm_test(int M, int N, int K, int num_gpus_to_test)
   rand_mat(B, K, N);
   zero_mat(C, M, N);
 
-  thablasStatus_t thablasStatus = thablas_c2d_Sgemm(M, N, K, A, B, C, num_gpus_to_test);
+  thablasStatus_t thablasStatus = thaBLAS_h2d_s_matmul(M, N, K, A, B, C, num_gpus_to_test);
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
   {
     printf("Validation: THABLAS error\n");  fflush(stdout);
@@ -120,6 +126,10 @@ bool thablas_c2d_Svds_test(int n, int num_gpus_to_test)
     }
   }
 
+  util_free((void*)A);
+  util_free((void*)B);
+  util_free((void*)B_ans);
+
   if (is_valid) {
     printf("Validation: VALID\n");
     return 1;
@@ -135,11 +145,11 @@ int main()
 {
   bool all_valid = 1;
 
-  all_valid = std::min(all_valid, thablas_c2d_Sgemm_test(3, 3, 3, 2));
+  all_valid = std::min(all_valid, test_thaBLAS_h2d_s_matmul(3, 3, 3, 2));
   assert(all_valid);
-  all_valid = std::min(all_valid, thablas_c2d_Sgemm_test(100, 100, 100, 3));
+  all_valid = std::min(all_valid, test_thaBLAS_h2d_s_matmul(100, 100, 100, 3));
   assert(all_valid);
-  all_valid = std::min(all_valid, thablas_c2d_Sgemm_test(1000, 1000, 1000, 4));
+  all_valid = std::min(all_valid, test_thaBLAS_h2d_s_matmul(1000, 1000, 1000, 4));
   assert(all_valid);
   printf("GEMM PASSED\n");
 

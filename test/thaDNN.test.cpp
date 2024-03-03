@@ -4,10 +4,7 @@
 #include "utils.hpp"
 
 #include <assert.h>
-
 #include <chrono>
-
-using namespace std;
 
 // copied from original CPU code
 void cpu_rmsnorm(float* o, float* x, float* weight, int size) {
@@ -62,6 +59,11 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
     }
   }
 
+  util_free((void*)x);
+  util_free((void*)o);
+  util_free((void*)weight);
+  util_free((void *)o_h);
+
   if (is_valid) {
     printf("Validation: VALID\n"); fflush(stdout);
     return 1;
@@ -109,10 +111,10 @@ bool test_thaDNN_h2d_s_softmax(int size)
   zero_vec(o, size);
 
   // run on gpu 
-  auto start_gpu = chrono::high_resolution_clock::now();
+  auto start_gpu = std::chrono::high_resolution_clock::now();
   thablasStatus_t thablasStatus = thaDNN_h2d_s_softmax(o, x, size);
-  auto end_gpu = chrono::high_resolution_clock::now();
-  auto duration_gpu = chrono::duration_cast<chrono::microseconds>(end_gpu - start_gpu);
+  auto end_gpu = std::chrono::high_resolution_clock::now();
+  auto duration_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
 
 
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
@@ -123,10 +125,10 @@ bool test_thaDNN_h2d_s_softmax(int size)
   zero_vec(o_h, size);
   memcpy(o_h, x, size * sizeof(float));
   
-  auto start_cpu = chrono::high_resolution_clock::now();
+  auto start_cpu = std::chrono::high_resolution_clock::now();
   softmax(o_h, size);
-  auto end_cpu = chrono::high_resolution_clock::now();
-  auto duration_cpu = chrono::duration_cast<chrono::microseconds>(end_cpu - start_cpu);
+  auto end_cpu = std::chrono::high_resolution_clock::now();
+  auto duration_cpu = std::chrono::duration_cast<std::chrono::microseconds>(end_cpu - start_cpu);
   
   // print time with 10 decimal places
   // printf("GPU time: %.10f\n", duration_gpu.count() / 1000000.0);
@@ -148,6 +150,9 @@ bool test_thaDNN_h2d_s_softmax(int size)
       is_valid = false;
     }
   }
+  util_free((void*)x);
+  util_free((void*)o);
+  util_free((void *)o_h);
 
   if (is_valid) {
     printf("Validation: VALID\n"); fflush(stdout);
@@ -164,14 +169,26 @@ int main()
 {
   bool all_valid = 1;
 
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4096));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(5120));
-  // assert(all_valid);
-  // printf("RMSNORM PASSED\n");
-
+  // test rmsnorm
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(512));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4096));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(5120));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(8192));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(111));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(11111));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(16384));
+  assert(all_valid);
+  printf("RMSNORM PASSED\n");
 
   // test softmax
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(1));
@@ -182,9 +199,7 @@ int main()
   assert(all_valid);
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(32000));
   assert(all_valid);
-
   printf("SOFTMAX PASSED\n");
-
 
   return 0;
 }

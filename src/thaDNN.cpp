@@ -4,57 +4,53 @@
 
 #include <hip/hip_runtime.h>
 #include <omp.h>
-// #include <hipblas.h>
+#include <hipblas.h>
 
-// void rmsnorm(float* o, float* x, float* weight, int size) {
-//   // calculate sum of squares
-//   float ss = 0.0f;
-//   for (int j = 0; j < size; j++) {
-//     ss += x[j] * x[j];
-//   }
-//   ss /= size;
-
-//   ss += 1e-5f;
-//   ss = 1.0f / sqrtf(ss);
-//   // normalize and scale
-//   for (int j = 0; j < size; j++) {
-//     o[j] = weight[j] * (ss * x[j]);
-//   }
-// }
-
+// size = 1 -> 16384
+#define RMS_LOCAL_BANK_SIZE 8
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
 {
     int j = threadIdx.x;
-    int j_pos = j * 8;
+    int j_pos = j * 16;
     if (j_pos >= size) return;
-    // 768  = 8 * 16 * 6
-    // 4096 = 8 * 16 * 32
-    // 5120 = 8 * 16 * 40
-    __shared__ float local_s[5120];
-    float local_x[8];
+    // 768  = 16 * 16 * 3
+    // 4096 = 16 * 16 * 16
+    // 5120 = 16 * 16 * 20
+    // 8192 = 16 * 16 * 32 
+    extern __shared__ float local_s[];
+    float local_x[16];
     float ss = 0;
-    for(int i=0 ; i<8 ; ++i)
+    for(int i=0 ; i<16 ; ++i)
     {
-        local_x[i] = x[j_pos+i];
-        ss += local_x[i] * local_x[i];
+        if (j_pos+i < size)
+        {
+            local_x[i] = x[j_pos+i];
+            ss += local_x[i] * local_x[i];
+        }
     }
-    local_s[j_pos] = ss;
+    local_s[j * RMS_LOCAL_BANK_SIZE] = ss;
     __syncthreads();
     
     ss = 0;
-    if (j_pos%128==0) // 8 * 16 = 128
+    if (j%16==0)
     {
-        for(int i=j_pos ; i<j_pos+128; i+=8)
-            ss += local_s[i];
-        local_s[j_pos] = ss;
+        int i_last = std::min((int)blockDim.x, j+16);
+        for(int i=j ; i<i_last; ++i)
+            ss += local_s[i * RMS_LOCAL_BANK_SIZE];
+        local_s[j * RMS_LOCAL_BANK_SIZE] = ss;
+        // printf("j: %d\n", j);
     }
     __syncthreads();
 
     ss = 0;
-    if (j_pos==0)
+    if (j==0)
     {
-        for(int i=0 ; i<size; i+=128)
-            ss += local_s[i];
+        int i_last = blockDim.x;
+        for(int i=0 ; i<i_last; i+=16)
+        {
+            ss += local_s[i * RMS_LOCAL_BANK_SIZE];
+            // printf("ss i: %f %d\n", ss, i);
+        }
         ss /= size;
         ss += 1e-5f;
         ss = 1.0f / sqrtf(ss);
@@ -63,15 +59,16 @@ __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int s
     __syncthreads();
 
     ss = local_s[0];
-    for(int i=0 ; i<8 ; ++i)
-    {
-        o[j_pos + i] = weight[j_pos + i] * (ss * local_x[i]);
-    }
+    for(int i=0 ; i<16 ; ++i)
+        if (j_pos + i < size)
+        {
+            o[j_pos + i] = weight[j_pos + i] * (ss * local_x[i]);
+        }
 }
 
 // '_s_' = single persion (float)
 // input: o, x, weight allocated on device
-// input: size = (768/4096/5120)
+// input: size = 1 -> 16384
 thablasStatus_t thaDNN_s_rmsnorm(thablasHandle_t handle, float* o, float* x, float* weight, int size) 
 {
     if (size==0 || o == nullptr || x == nullptr || weight == nullptr || handle.current_gpu_id < 0)
@@ -81,10 +78,11 @@ thablasStatus_t thaDNN_s_rmsnorm(thablasHandle_t handle, float* o, float* x, flo
     }
 
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(size / 8);
+    int num_device_threads = (size + 16 - 1) / 16;
+    dim3 blockDim(num_device_threads);
     dim3 gridDim(1);
-    // dim3 gridSize((size + RMSNORM_BLOCK_SIZE - 1) / RMSNORM_BLOCK_SIZE);
-    hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel, gridDim, blockDim, 0, 0, o, x, weight, size);
+    int local_mem_size = (num_device_threads * RMS_LOCAL_BANK_SIZE) * sizeof(float);
+    hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel, gridDim, blockDim, local_mem_size, 0, o, x, weight, size);
     CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -138,34 +136,10 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm(float* o, float* x, float* weight, int size
     return THABLAS_STATUS_SUCCESS;
 }
 
-
-
 /*
 *********************************************************************************************************
 * softmax
 *********************************************************************************************************
-*/
-
-/*
-void softmax(float* x, int size) {
-  // find max value (for numerical stability)
-  float max_val = x[0];
-  for (int i = 1; i < size; i++) {
-    if (x[i] > max_val) {
-      max_val = x[i];
-    }
-  }
-  // exp and sum
-  float sum = 0.0f;
-  for (int i = 0; i < size; i++) {
-    x[i] = expf(x[i] - max_val);
-    sum += x[i];
-  }
-  // normalize
-  for (int i = 0; i < size; i++) {
-    x[i] /= sum;
-  }
-}
 */
 
 // size = 1 -> 32000
@@ -331,4 +305,3 @@ thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size)
 
     return THABLAS_STATUS_SUCCESS;
 }
-
