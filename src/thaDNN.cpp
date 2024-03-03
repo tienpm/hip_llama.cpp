@@ -168,8 +168,8 @@ void softmax(float* x, int size) {
 }
 */
 
-// dimmention of input vector = 32000
-__global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size = 32000)
+// size = 1 -> 32000
+__global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size)
 {
     /*
     reduction for max value 
@@ -189,8 +189,11 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size = 3200
     #pragma unroll
     for (int i = 0; i < 32; i++)
     {
-        local_x[i] = x[j_pos + i];
-        if (local_x[i] > max_val) max_val = local_x[i];
+        if (j_pos + i < size)
+        {
+            local_x[i] = x[j_pos + i];
+            if (local_x[i] > max_val) max_val = local_x[i];
+        }
     }
 
     local_reduction_max[j] = max_val;
@@ -201,8 +204,9 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size = 3200
     if (j_pos==0)
     {
         max_val = local_reduction_max[0];
+        int i_stop = std::min(1000, (int)blockDim.x);
         #pragma unroll
-        for (int i = 0; i < 1000; i++)
+        for (int i = 0; i < i_stop; i++)
         {
             if (local_reduction_max[i] > max_val) max_val = local_reduction_max[i];
         }
@@ -219,11 +223,15 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size = 3200
     // split array to blocks ,each block is responsible for 32 elements
     __shared__ float local_reduction_sum[1000]; // 32000/32 = 1000
     float sum = 0.0f;
+    max_val = local_reduction_max[0];
     #pragma unroll
     for (int i = 0; i < 32; i++)
     {
-        local_x[i] = expf(local_x[i] - max_val);
-        sum += local_x[i];
+        if (j_pos + i < size) 
+        {
+            local_x[i] = expf(local_x[i] - max_val);
+            sum += local_x[i];
+        }
     }
 
     //  reduction for sum with step 32
@@ -232,9 +240,10 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size = 3200
 
     if (j_pos==0)
     {
-        sum = local_reduction_sum[0];
+        sum = 0.0f;
+        int i_stop = std::min(1000, (int)blockDim.x);
         #pragma unroll
-        for (int i = 0; i < 1000; i++)
+        for (int i = 0; i < i_stop; i++)
         {
             sum += local_reduction_sum[i];
         }
@@ -250,7 +259,8 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size = 3200
     #pragma unroll
     for (int i = 0; i < 32; i++)
     {
-        output[j_pos + i] = local_x[i] / sum;
+        if (j_pos + i < size) 
+            output[j_pos + i] = local_x[i] / sum;
     }
 
 }
@@ -267,7 +277,7 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
     }
 
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(size / 32);
+    dim3 blockDim((size + 32 - 1) / 32);
     dim3 gridDim(1);
     // dim3 gridSize((size + SOFTMAX_BLOCK_SIZE - 1) / SOFTMAX_BLOCK_SIZE);
     hipLaunchKernelGGL(thaDNN_s_softmax_kernel, gridDim, blockDim, 0, 0, output, x, size);
@@ -277,9 +287,9 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
 }
 
 // _h2d_ = host to device
-// output, x allocated on Host
+// [output], [x] are allocated on Host
 // only run on 1 devices
-
+// [size] = 1 -> 32000
 thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size) 
 {
     if (size==0 || output == nullptr || x == nullptr)

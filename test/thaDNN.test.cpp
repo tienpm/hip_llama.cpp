@@ -129,8 +129,8 @@ bool test_thaDNN_h2d_s_softmax(int size)
   auto duration_cpu = chrono::duration_cast<chrono::microseconds>(end_cpu - start_cpu);
   
   // print time with 10 decimal places
-  printf("GPU time: %.10f\n", duration_gpu.count() / 1000000.0);
-  printf("CPU time: %.10f\n", duration_cpu.count() / 1000000.0);
+  // printf("GPU time: %.10f\n", duration_gpu.count() / 1000000.0);
+  // printf("CPU time: %.10f\n", duration_cpu.count() / 1000000.0);
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
@@ -174,14 +174,15 @@ int main()
 
 
   // test softmax
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(768));
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(1));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(4096));
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(111));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(5120));
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(11111));
   assert(all_valid);
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(32000));
   assert(all_valid);
+
   printf("SOFTMAX PASSED\n");
 
 
