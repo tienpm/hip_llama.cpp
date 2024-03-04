@@ -1,5 +1,6 @@
 #pragma once
 #include "thaBLAS.hpp"
+#include "utils.hpp"
 
 // '_s_' = single persion (float)
 // input: o, x, weight allocated on device
