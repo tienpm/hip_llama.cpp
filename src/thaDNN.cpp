@@ -307,3 +307,123 @@ thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size)
 }
 
 
+/*
+*********************************************************************************************************
+*  RoPE relative positional encoding
+*********************************************************************************************************
+*/
+
+/*
+    RoPE relative positional encoding: complex-valued rotate q and k in each head
+    for (int i = 0; i < dim; i+=2) {
+      int head_dim = i % head_size;
+      float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+      float val = pos * freq;
+      float fcr = cosf(val);
+      float fci = sinf(val);
+      int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+      for (int v = 0; v < rotn; v++) {
+        float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
+        float v0 = vec[i];
+        float v1 = vec[i+1];
+        vec[i]   = v0 * fcr - v1 * fci;
+        vec[i+1] = v0 * fci + v1 * fcr;
+      }
+    }
+*/
+
+__global__ void RoPE_relative_positional_encoding_kernel(int dim, int head_size, int kv_dim, int pos, float *q, float *k)
+{
+    int i = threadIdx.x*2;
+    if (i >= dim) return;
+    //
+    int head_dim = i % head_size;
+    double freq = 1.0 / pow(10000.0, head_dim / (double)head_size);
+    double posf = (double)pos;
+    double val = posf * freq;
+    double fcr = cos(val);
+    double fci = sin(val);
+    int rotn = i < kv_dim ? 2 : 1;
+    //
+    for (int v = 0; v < rotn; v++){
+        float* vec = v == 0 ? q : k;
+        double v0 = vec[i];
+        double v1 = vec[i+1];
+        vec[i] = (float) v0 * fcr - v1 * fci;
+        vec[i+1] = (float) v0 * fci + v1 * fcr;
+    }
+}
+
+// _s_ = single persion (float)
+// input: q, k allocated on device
+// input: dim = 512, head_size = 64, kv_dim = 2, pos = 0
+
+thablasStatus_t RoPE_relative_positional_encoding(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
+{
+    if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS RoPE_relative_positional_encoding ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim((dim + 2 - 1) / 2);
+    dim3 gridDim(1);
+    RoPE_relative_positional_encoding_kernel<<<gridDim, blockDim>>>(dim, head_size, kv_dim, pos, q, k);
+    CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// _h2d_ = host to device
+// [q], [k] are allocated on Host
+// only run on 1 devices
+// [dim] = 512, [head_size] = 64, [kv_dim] = 2, [pos] = 0
+
+thablasStatus_t RoPE_relative_positional_encoding_h2d(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
+{
+    if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr)
+    {
+        printf("THABLAS RoPE_relative_positional_encoding ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS RoPE_relative_positional_encoding ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *q_d, *k_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&q_d, dim * sizeof(float)));
+    CHECK_HIP(hipMalloc(&k_d, dim * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(q_d, q, dim * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(k_d, k, dim * sizeof(float), hipMemcpyHostToDevice));
+
+    // thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = RoPE_relative_positional_encoding(handle, dim, head_size, kv_dim, pos, q_d, k_d);
+    if (status != THABLAS_STATUS_SUCCESS) {
+        printf("THABLAS RoPE_relative_positional_encoding ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(q, q_d, dim * sizeof(float), hipMemcpyDeviceToHost));
+    CHECK_HIP(hipMemcpy(k, k_d, dim * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(q_d));
+    CHECK_HIP(hipFree(k_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
+
+

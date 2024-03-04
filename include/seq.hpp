@@ -100,6 +100,8 @@ float* forward(Transformer* transformer, int token, int pos) {
       }
     }
 
+    
+
     // multihead attention. iterate over all heads
     int h;
     for (h = 0; h < p->n_heads; h++) {
