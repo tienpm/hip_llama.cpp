@@ -305,5 +305,3 @@ thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size)
 
     return THABLAS_STATUS_SUCCESS;
 }
-
-

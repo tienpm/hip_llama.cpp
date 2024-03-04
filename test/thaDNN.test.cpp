@@ -123,11 +123,15 @@ bool test_forward()
   Transformer transformer;
   char checkpoint_path[64] = "/shared/erc/getpTA/main/modelbin/stories110M.bin";
   build_transformer(&transformer, checkpoint_path);
-  
-  float* cpuLogits = forward(&transformer, 0, 0);
-  float* gpuLogits = forward(&transformer, 0, 0);
-
   Config* p = &transformer.config;
+  
+  int size = p->vocab_size;
+  float* logits = forward(&transformer, 0, 0);
+
+  float* cpuLogits = (float*)malloc(size * sizeof(float));
+  memcpy(cpuLogits, logits, size * sizeof(float));
+
+  float* gpuLogits = forward(&transformer, 0, 0);
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
@@ -194,5 +198,7 @@ int main()
   // test forward
   all_valid = test_forward();
   assert(all_valid);
+  printf("FORWARD PASSED\n");
+
   return 0;
 }
