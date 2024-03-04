@@ -1,27 +1,10 @@
 #include "hip_helper.hpp"
 #include "thaBLAS.hpp"
 #include "thaDNN.hpp"
-#include "utils.hpp"
+#include "seq.hpp"
 
 #include <assert.h>
 #include <chrono>
-
-// copied from original CPU code
-void cpu_rmsnorm(float* o, float* x, float* weight, int size) {
-  // calculate sum of squares
-  float ss = 0.0f;
-  for (int j = 0; j < size; j++) {
-    ss += x[j] * x[j];
-  }
-  ss /= size;
-
-  ss += 1e-5f;
-  ss = 1.0f / sqrtf(ss);
-  // normalize and scale
-  for (int j = 0; j < size; j++) {
-    o[j] = weight[j] * (ss * x[j]);
-  }
-}
 
 bool test_thaDNN_h2d_s_rmsnorm(int size)
 {
@@ -40,7 +23,7 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
   float *o_h;
   alloc_vec(&o_h, size);
   zero_vec(o_h, size);
-  cpu_rmsnorm(o_h, x, weight, size);  
+  rmsnorm(o_h, x, weight, size);  
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
@@ -73,35 +56,6 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
   }
 }
 
-
-/*
-*********************************************************************
-* Softmax
-*********************************************************************
-*/
-
-
-void softmax(float* x, int size) {
-  // find max value (for numerical stability)
-  float max_val = x[0];
-  for (int i = 1; i < size; i++) {
-    if (x[i] > max_val) {
-      max_val = x[i];
-    }
-  }
-  // exp and sum
-  float sum = 0.0f;
-  for (int i = 0; i < size; i++) {
-    x[i] = expf(x[i] - max_val);
-    sum += x[i];
-  }
-  // normalize
-  for (int i = 0; i < size; i++) {
-    x[i] /= sum;
-  }
-}
-
-
 bool test_thaDNN_h2d_s_softmax(int size)
 {
   float *o, *x;
@@ -111,10 +65,10 @@ bool test_thaDNN_h2d_s_softmax(int size)
   zero_vec(o, size);
 
   // run on gpu 
-  auto start_gpu = std::chrono::high_resolution_clock::now();
+  // auto start_gpu = std::chrono::high_resolution_clock::now();
   thablasStatus_t thablasStatus = thaDNN_h2d_s_softmax(o, x, size);
-  auto end_gpu = std::chrono::high_resolution_clock::now();
-  auto duration_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
+  // auto end_gpu = std::chrono::high_resolution_clock::now();
+  // auto duration_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
 
 
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
@@ -125,10 +79,10 @@ bool test_thaDNN_h2d_s_softmax(int size)
   zero_vec(o_h, size);
   memcpy(o_h, x, size * sizeof(float));
   
-  auto start_cpu = std::chrono::high_resolution_clock::now();
+  // auto start_cpu = std::chrono::high_resolution_clock::now();
   softmax(o_h, size);
-  auto end_cpu = std::chrono::high_resolution_clock::now();
-  auto duration_cpu = std::chrono::duration_cast<std::chrono::microseconds>(end_cpu - start_cpu);
+  // auto end_cpu = std::chrono::high_resolution_clock::now();
+  // auto duration_cpu = std::chrono::duration_cast<std::chrono::microseconds>(end_cpu - start_cpu);
   
   // print time with 10 decimal places
   // printf("GPU time: %.10f\n", duration_gpu.count() / 1000000.0);
@@ -164,6 +118,42 @@ bool test_thaDNN_h2d_s_softmax(int size)
 }
 
 
+bool test_forward()
+{
+  Transformer transformer;
+  char checkpoint_path[64] = "/shared/erc/getpTA/main/modelbin/stories110M.bin";
+  build_transformer(&transformer, checkpoint_path);
+  
+  float* cpuLogits = forward(&transformer, 0, 0);
+  float* gpuLogits = forward(&transformer, 0, 0);
+
+  Config* p = &transformer.config;
+
+  bool is_valid = true;
+  int cnt = 0, thr = 10;
+  float eps = 1e-4;
+  for (int i = 0; i < p->vocab_size ; ++i) {
+    float logit_gpu = gpuLogits[i];
+    float logit_ans = cpuLogits[i];
+    if (fabsf(logit_gpu - logit_ans) > eps &&
+        (logit_gpu == 0 || fabsf((logit_gpu - logit_ans) / logit_ans) > eps)) {
+      ++cnt;
+      if (cnt <= thr)
+        printf("O[%d] : correct_value = %f, your_value = %f\n", i, logit_ans, logit_gpu);
+      if (cnt == thr + 1)
+        printf("Too many error, only first %d values are printed.\n", thr);
+      is_valid = false;
+    }
+  }
+
+  if (is_valid) {
+    printf("Validation: VALID\n"); fflush(stdout);
+    return 1;
+  } else {
+    printf("Validation: INVALID\n"); fflush(stdout);
+    return 0;
+  }
+}
 
 int main()
 {
@@ -201,5 +191,8 @@ int main()
   assert(all_valid);
   printf("SOFTMAX PASSED\n");
 
+  // test forward
+  all_valid = test_forward();
+  assert(all_valid);
   return 0;
 }

@@ -260,3 +260,9 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
 
     return THABLAS_STATUS_SUCCESS;
 }
+
+
+thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int M)
+{
+    return thaBLAS_h2d_s_matmul(M, 1, K, A, B, C);
+}
