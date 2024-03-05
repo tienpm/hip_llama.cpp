@@ -160,7 +160,6 @@ float* forward(Transformer* transformer, int token, int pos) {
     // SwiGLU non-linearity
     for (int i = 0; i < hidden_dim; i++) {
       float val = s->hb[i];
-      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
       val *= (1.0f / (1.0f + expf(-val)));
       // elementwise multiply with w3(x)
       val *= s->hb2[i];

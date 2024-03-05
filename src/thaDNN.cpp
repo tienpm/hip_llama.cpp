@@ -421,5 +421,110 @@ thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, f
 }
 
 
+/*
+*********************************************************************************************************
+*  SwiGLU non-linearity
+*********************************************************************************************************
+*/
+// CPU code:
+    // SwiGLU non-linearity
+    // for (int i = 0; i < hidden_dim; i++) {
+    //   float val = s->hb[i];
+      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+    //   val *= (1.0f / (1.0f + expf(-val)));
+      // elementwise multiply with w3(x)
+    //   val *= s->hb2[i];
+    //   s->hb[i] = val;
+    // }
+
+// '_s_' = single persion (float)
+__global__ void thaDNN_s_swiglu_kernel(float* hb, float*hb2, int hidden_dim){
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= hidden_dim) return;
+      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+    float val = hb[i];
+    val *= (1.0f / (1.0f + expf(-val)));
+      // elementwise multiply with w3(x)
+    val *= hb2[i];
+    hb[i] = val;
+}
+
+
+// '_s_' = single prisesion
+// input: hb, hb2 allocated on device
+// [hidden_dim] = 1 -> 32000
+
+thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, int hidden_dim)
+{
+    if (hidden_dim==0 || hb == nullptr || hb2 == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS SwiGLU_non_linearity ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(64);
+    dim3 gridDim((hidden_dim + blockDim.x - 1) / blockDim.x);
+    thaDNN_s_swiglu_kernel<<<gridDim, blockDim>>>(hb, hb2, hidden_dim);
+
+    CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// _h2d_ = host to device
+// [hb], [hb2] are allocated on Host
+// only run on 1 devices
+// [hidden_dim] = 1 -> 32000
+
+thablasStatus_t thaDNN_h2d_s_swiglu(float *hb, float *hb2, int hidden_dim)
+{
+    if ( hidden_dim == 0 || hb == nullptr || hb2 == nullptr)
+    {
+        printf("THABLAS SwiGLU_non_linearity ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS SwiGLU_non_linearity ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *hb_d, *hb2_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&hb_d, hidden_dim*sizeof(float)));
+    CHECK_HIP(hipMalloc(&hb2_d, hidden_dim*sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(hb_d, hb, hidden_dim*sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(hb2_d, hb2, hidden_dim*sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_swiglu(handle, hb_d, hb2_d, hidden_dim);
+    if (status != THABLAS_STATUS_SUCCESS) {
+        printf("THABLAS SwiGLU_non_linearity ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(hb, hb_d, hidden_dim*sizeof(float), hipMemcpyDeviceToHost));
+    CHECK_HIP(hipMemcpy(hb2, hb2_d, hidden_dim*sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+    
+    CHECK_HIP(hipFree(hb_d));
+    CHECK_HIP(hipFree(hb2_d));
+
+    return THABLAS_STATUS_SUCCESS;
+    
+}
+
+
+
+
+
 
 

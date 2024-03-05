@@ -22,3 +22,5 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
 thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size);
 
 thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, float *q, float *k);
+
+thablasStatus_t thaDNN_h2d_s_swiglu(float *hb, float *hb2, int hidden_dim);
