@@ -195,10 +195,8 @@ bool test_RoPE_relative_positional_encoding(int dim, int head_size, int kv_dim, 
   float *q_h, *k_h;
   alloc_vec(&q_h, dim);
   alloc_vec(&k_h, dim);
-  // memcpy(q_h, q, dim * sizeof(float));
-  // memcpy(k_h, k, dim * sizeof(float));
-  rand_vec(q_h, dim);
-  rand_vec(k_h, dim);
+  memcpy(q_h, q, dim * sizeof(float));
+  memcpy(k_h, k, dim * sizeof(float));
   
   thablasStatus_t thablasStatus = thaDNN_h2d_s_rope(dim, head_size, kv_dim, pos, q, k);
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
@@ -255,21 +253,10 @@ bool test_RoPE_relative_positional_encoding(int dim, int head_size, int kv_dim, 
 *  SwiGLU non-linearity
 *********************************************************************************************************
 */
-// CPU code:
-    // SwiGLU non-linearity
-    // for (int i = 0; i < hidden_dim; i++) {
-    //   float val = s->hb[i];
-      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-    //   val *= (1.0f / (1.0f + expf(-val)));
-      // elementwise multiply with w3(x)
-    //   val *= s->hb2[i];
-    //   s->hb[i] = val;
-    // }
 
 void SwiGLU( float *hb, float *hb2, int hidden_dim){
   for (int i = 0; i < hidden_dim; i++) {
     float val = hb[i];
-    // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
     val *= (1.0f / (1.0f + expf(-val)));
     // elementwise multiply with w3(x)
     val *= hb2[i];
@@ -332,25 +319,25 @@ int main()
 {
   bool all_valid = 1;
 
-  // // test RoPE_relative_positional_encoding
-  // all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(256, 16, 64, 0));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(2, 1, 2, 1));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(16384, 256, 11111, 512));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(2222, 333, 2111, 111));
-  // assert(all_valid);
-  // printf("RoPE_relative_positional_encoding PASSED\n");
+  // test RoPE_relative_positional_encoding
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(256, 16, 64, 0));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(2, 1, 2, 1));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(16384, 256, 11111, 512));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(2222, 333, 2111, 111));
+  assert(all_valid);
+  printf("RoPE_relative_positional_encoding PASSED\n");
 
   // test SwiGLU
   all_valid = std::min(all_valid, test_swiglu(256));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_swiglu(2));
+  all_valid = std::min(all_valid, test_swiglu(1));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_swiglu(16384));
+  all_valid = std::min(all_valid, test_swiglu(1000000));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_swiglu(2222));
+  all_valid = std::min(all_valid, test_swiglu(33333));
   assert(all_valid);
   printf("SwiGLU PASSED\n");
 
