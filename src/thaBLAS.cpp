@@ -134,6 +134,72 @@ thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_n
  * ===========================================================================
  */
 
+__global__ void thaBLAS_s_vecaddvec_kernel(float *a, float *b, int size)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i<size) 
+        a[i] += b[i];
+}
+
+thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size)
+{
+    if (a==nullptr || b==nullptr || size==0)
+    {
+        printf("THABLAS VEC ADD VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(64);
+    dim3 gridDim((size + 64 - 1) / 64);
+    hipLaunchKernelGGL(thaBLAS_s_vecaddvec_kernel, gridDim, blockDim, 0, 0, a, b, size);
+    CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// a[i] += b[i]
+thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size)
+{
+    if (a==nullptr || b==nullptr || size==0)
+    {
+        printf("THABLAS VEC ADD VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_gpus;
+    CHECK_HIP(hipGetDeviceCount(&num_gpus));
+
+    if (!num_gpus)
+    {
+        printf("THABLAS VEC ADD VEC ERROR: COULD NOT FIND ANY GPU\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *a_d, *b_d;
+    CHECK_HIP(hipMalloc(&a_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&b_d, size * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(a_d, a, size * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(b_d, b, size * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaBLAS_s_vecaddvec(handle, a_d, b_d, size);
+    if (status != THABLAS_STATUS_SUCCESS) {
+        printf("THABLAS VEC ADD VEC ERROR: ERROR\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(a, a_d, size * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(a_d));
+    CHECK_HIP(hipFree(b_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
 /*
  * ===========================================================================
  *    level 3 BLAS

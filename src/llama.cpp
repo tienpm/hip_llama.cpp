@@ -14,6 +14,8 @@
 #include <iostream>
 
 #include "seq.hpp"
+#include "thaDNN.hpp"
+#include "thaBLAS.hpp"
 
 void free_run_state(RunState* s) {
   free(s->x);
@@ -723,9 +725,11 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
     int steps = requests->max_seq_len; // max sequence length
+    thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
     while (pos < steps) {
       // forward the transformer to get logits for the next token
-      float* logits = forward(transformer, token, pos);
+      float* logits = nullptr;
+      tha_status = thaDNN_h2d_s_forward(transformer, token, pos, logits);
 
       // advance the state machine
       if (pos < num_prompt_tokens - 1) {
