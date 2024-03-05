@@ -132,7 +132,7 @@ bool test_forward()
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
-  float eps = 1e-4;
+  float eps = 1e-5;
   for (int i = 0; i < p->vocab_size ; ++i) {
     float logit_gpu = gpuLogits[i];
     float logit_ans = cpuLogits[i];
@@ -165,23 +165,22 @@ bool test_forward()
 
 void RoPE_relative_positional_encoding(int dim,  int head_size, int kv_dim, int pos,  float *q, float *k) 
 {
-    // RoPE relative positional encoding: complex-valued rotate q and k in each head
-    // int pos = pos;
-    for (int i = 0; i < dim; i+=2) {
-      int head_dim = i % head_size;
-      float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-      float val = pos * freq;
-      float fcr = cosf(val);
-      float fci = sinf(val);
-      int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-      for (int v = 0; v < rotn; v++) {
-        float* vec = v == 0 ? q : k; // the vector to rotate (query or key)
-        float v0 = vec[i];
-        float v1 = vec[i+1];
-        vec[i]   = v0 * fcr - v1 * fci;
-        vec[i+1] = v0 * fci + v1 * fcr;
-      }
+  // RoPE relative positional encoding: complex-valued rotate q and k in each head
+  for (int i = 0; i < dim; i+=2) {
+    int head_dim = i % head_size;
+    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
+    int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+    for (int v = 0; v < rotn; v++) {
+      float* vec = v == 0 ? q : k; // the vector to rotate (query or key)
+      float v0 = vec[i];
+      float v1 = vec[i+1];
+      vec[i]   = v0 * fcr - v1 * fci;
+      vec[i+1] = v0 * fci + v1 * fcr;
     }
+  }
 }
 
 bool test_RoPE_relative_positional_encoding(int dim, int head_size, int kv_dim, int pos)
@@ -198,11 +197,14 @@ bool test_RoPE_relative_positional_encoding(int dim, int head_size, int kv_dim, 
   memcpy(q_h, q, dim * sizeof(float));
   memcpy(k_h, k, dim * sizeof(float));
 
+  thablasStatus_t thablasStatus = thaDNN_h2d_s_rope(dim, head_size, kv_dim, pos, q, k);
+  if (thablasStatus != THABLAS_STATUS_SUCCESS)
+      return 0;
   RoPE_relative_positional_encoding(dim, head_size, kv_dim, pos, q_h, k_h);
 
   bool is_valid = true;
   int cnt = 0, thr = 50;
-  float eps = 0.1;
+  float eps = 1e-4;
   for (int i = 0; i < dim; ++i) {
     float q_gpu = q[i];
     float q_ans = q_h[i];
@@ -249,54 +251,15 @@ int main()
 {
   bool all_valid = 1;
 
-  // // test rmsnorm
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(512));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4096));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(5120));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(8192));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(111));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(11111));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(16384));
-  // assert(all_valid);
-  // printf("RMSNORM PASSED\n");
-
-  // // test softmax
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(1));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(111));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(11111));
-  // assert(all_valid);
-  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(32000));
-  // assert(all_valid);
-  // printf("SOFTMAX PASSED\n");
-
-  // // test forward
-  // all_valid = test_forward();
-  // assert(all_valid);
-
   // test RoPE_relative_positional_encoding
-  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(768, 64, 768, 0));
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(256, 16, 64, 0));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(768, 64, 768, 2));
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(2, 1, 2, 1));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(768, 64, 768, 1));
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(16384, 256, 16383, 512));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(5120, 128, 256, 1));
+  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(2222, 333, 2111, 111));
   assert(all_valid);
-  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(8192, 128, 256, 5));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(1, 1, 1, 1));
   printf("RoPE_relative_positional_encoding PASSED\n");
 
 
