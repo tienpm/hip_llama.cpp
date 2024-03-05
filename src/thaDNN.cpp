@@ -332,33 +332,30 @@ thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size)
     }
 */
 
-__global__ void RoPE_relative_positional_encoding_kernel(int dim, int head_size, int kv_dim, int pos, float *q, float *k)
+__global__ void thaDNN_s_rope_kernel(int dim, int head_size, int kv_dim, int pos, float *q, float *k)
 {
-    int i = threadIdx.x*2;
+    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
     if (i >= dim) return;
     //
     int head_dim = i % head_size;
-    double freq = 1.0 / pow(10000.0, head_dim / (double)head_size);
-    double posf = (double)pos;
-    double val = posf * freq;
-    double fcr = cos(val);
-    double fci = sin(val);
-    int rotn = i < kv_dim ? 2 : 1;
-    //
-    for (int v = 0; v < rotn; v++){
-        float* vec = v == 0 ? q : k;
-        double v0 = vec[i];
-        double v1 = vec[i+1];
-        vec[i] = (float) v0 * fcr - v1 * fci;
-        vec[i+1] = (float) v0 * fci + v1 * fcr;
+    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
+    int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+    for (int v = 0; v < rotn; v++) {
+        float* vec = v == 0 ? q : k; // the vector to rotate (query or key)
+        float v0 = vec[i];
+        float v1 = vec[i+1];
+        vec[i]   = v0 * fcr - v1 * fci;
+        vec[i+1] = v0 * fci + v1 * fcr;
     }
 }
 
 // _s_ = single persion (float)
 // input: q, k allocated on device
-// input: dim = 512, head_size = 64, kv_dim = 2, pos = 0
-
-thablasStatus_t RoPE_relative_positional_encoding(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
+// [dim] % 2 = 0
+thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
 {
     if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr || handle.current_gpu_id < 0)
     {
@@ -367,9 +364,9 @@ thablasStatus_t RoPE_relative_positional_encoding(thablasHandle_t handle, int di
     }
 
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim((dim + 2 - 1) / 2);
-    dim3 gridDim(1);
-    RoPE_relative_positional_encoding_kernel<<<gridDim, blockDim>>>(dim, head_size, kv_dim, pos, q, k);
+    dim3 blockDim(64);
+    dim3 gridDim((dim + 128 - 1) / 128);
+    thaDNN_s_rope_kernel<<<gridDim, blockDim>>>(dim, head_size, kv_dim, pos, q, k);
     CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -378,9 +375,8 @@ thablasStatus_t RoPE_relative_positional_encoding(thablasHandle_t handle, int di
 // _h2d_ = host to device
 // [q], [k] are allocated on Host
 // only run on 1 devices
-// [dim] = 512, [head_size] = 64, [kv_dim] = 2, [pos] = 0
-
-thablasStatus_t RoPE_relative_positional_encoding_h2d(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
+// [dim] % 2 = 0
+thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
 {
     if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr)
     {
@@ -406,9 +402,9 @@ thablasStatus_t RoPE_relative_positional_encoding_h2d(thablasHandle_t handle, in
     CHECK_HIP(hipMemcpy(q_d, q, dim * sizeof(float), hipMemcpyHostToDevice));
     CHECK_HIP(hipMemcpy(k_d, k, dim * sizeof(float), hipMemcpyHostToDevice));
 
-    // thablasHandle_t handle;
+    thablasHandle_t handle;
     thablasCreate(&handle);
-    thablasStatus_t status = RoPE_relative_positional_encoding(handle, dim, head_size, kv_dim, pos, q_d, k_d);
+    thablasStatus_t status = thaDNN_s_rope(handle, dim, head_size, kv_dim, pos, q_d, k_d);
     if (status != THABLAS_STATUS_SUCCESS) {
         printf("THABLAS RoPE_relative_positional_encoding ERROR: ERROR on Device\n"); fflush(stdout);
     }

@@ -20,3 +20,5 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
 // output, x allocated on Host
 // only run on 1 devices
 thablasStatus_t thaDNN_h2d_s_softmax(float* output, float* x, int size);
+
+thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, float *q, float *k);
