@@ -328,6 +328,71 @@ bool test_swiglu(int hidden_dim){
 
 }
 
+/*
+*********************************************************************************************************
+*  Residual connection
+*********************************************************************************************************
+*/
+/* CPU code:
+for (int i = 0; i < dim; i++) {
+    x[i] += s->xb[i];
+}
+*/ 
+
+void residual_connection(float *x, float *s_xb, int dim){
+  for (int i = 0; i < dim; i++) {
+    x[i] += s_xb[i];
+  }
+}
+
+bool test_residual_connection(int dim){
+  float *x, *s_xb;
+  alloc_vec(&x, dim);
+  alloc_vec(&s_xb, dim);
+  rand_vec(x, dim);
+  rand_vec(s_xb, dim);
+
+  float *x_h;
+  alloc_vec(&x_h, dim);
+  memcpy(x_h, x, dim * sizeof(float));
+  residual_connection(x_h, s_xb, dim);
+
+  thablasStatus_t thablasStatus = thaDNN_h2d_s_residual_connection(x, s_xb, dim);
+  if (thablasStatus != THABLAS_STATUS_SUCCESS)
+      return 0;
+
+  bool is_valid = true;
+  int cnt = 0, thr = 50;
+  float eps = 1e-4;
+  for (int i = 0; i < dim; ++i) {
+    float x_gpu = x[i];
+    float x_ans = x_h[i];
+    if (fabsf(x_gpu - x_ans) > eps &&
+        (x_ans == 0 || fabsf((x_gpu - x_ans) / x_ans) > eps)) {
+      ++cnt;
+      if (cnt <= thr)
+        printf("X[%d] : correct_value = %f, your_value = %f\n", i, x_ans, x_gpu);
+      if (cnt == thr + 1)
+        printf("Too many error, only first %d values are printed.\n", thr);
+      is_valid = false;
+    }
+  }
+
+  util_free((void*)x);
+  util_free((void*)s_xb);
+  util_free((void *)x_h);
+
+  if (is_valid) {
+    printf("Validation: VALID\n"); fflush(stdout);
+    return 1;
+  } else {
+    printf("Validation: INVALID\n"); fflush(stdout);
+    return 0;
+  }
+
+}
+
+
 int main()
 {
   bool all_valid = 1;
@@ -353,6 +418,19 @@ int main()
   all_valid = std::min(all_valid, test_swiglu(2222));
   assert(all_valid);
   printf("SwiGLU PASSED\n");
+
+  // test residual_connection
+  all_valid = std::min(all_valid, test_residual_connection(256));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_residual_connection(1));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_residual_connection(2));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_residual_connection(16384));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_residual_connection(2222));
+  assert(all_valid);
+  printf("residual_connection PASSED\n");
 
   return 0;
 }
