@@ -48,8 +48,8 @@ typedef struct {
   float *att; // buffer for scores/attention values (n_heads, seq_len)
   float *logits; // output logits
   // kv cache
-  float* key_cache;   // (layer, seq_len, dim)
-  float* value_cache; // (layer, seq_len, dim)
+  float* key_cache;   // (layer, seq_len, dim??) -> dim or kv_dim ??
+  float* value_cache; // (layer, seq_len, dim??) -> dim or kv_dim ??
 } RunState;
 
 typedef struct {
