@@ -452,8 +452,6 @@ __global__ void thaDNN_s_swiglu_kernel(float* hb, float*hb2, int hidden_dim){
 
 // '_s_' = single prisesion
 // input: hb, hb2 allocated on device
-// [hidden_dim] = 1 -> 32000
-
 thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, int hidden_dim)
 {
     if (hidden_dim==0 || hb == nullptr || hb2 == nullptr || handle.current_gpu_id < 0)
@@ -475,8 +473,6 @@ thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, i
 // _h2d_ = host to device
 // [hb], [hb2] are allocated on Host
 // only run on 1 devices
-// [hidden_dim] = 1 -> 32000
-
 thablasStatus_t thaDNN_h2d_s_swiglu(float *hb, float *hb2, int hidden_dim)
 {
     if ( hidden_dim == 0 || hb == nullptr || hb2 == nullptr)
