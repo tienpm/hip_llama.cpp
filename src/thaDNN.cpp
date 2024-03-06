@@ -144,7 +144,7 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm(float* o, float* x, float* weight, int size
 */
 
 // size = 1 -> 32000
-__global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size)
+__global__ void thaDNN_s_softmax_kernel(float* x, int size)
 {
     /*
     reduction for max value 
@@ -235,7 +235,7 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size)
     for (int i = 0; i < 32; i++)
     {
         if (j_pos + i < size) 
-            output[j_pos + i] = local_x[i] / sum;
+            x[j_pos + i] = local_x[i] / sum;
     }
 
 }
@@ -243,9 +243,9 @@ __global__ void thaDNN_s_softmax_kernel(float* output, float* x, int size)
 // _s_ = single persion (float)
 // input: output, x allocated on device
 // input: size = 32000
-thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x, int size) 
+thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* x, int size) 
 {
-    if (size==0 || output == nullptr || x == nullptr || handle.current_gpu_id < 0)
+    if (size==0 || x == nullptr || handle.current_gpu_id < 0)
     {
         printf("THABLAS SOFTMAX ERROR: INVALID ARGUMENT\n"); fflush(stdout);
         return THABLAS_STATUS_ALLOC_FAILED;        
@@ -255,7 +255,7 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
     dim3 blockDim((size + 32 - 1) / 32);
     dim3 gridDim(1);
     // dim3 gridSize((size + SOFTMAX_BLOCK_SIZE - 1) / SOFTMAX_BLOCK_SIZE);
-    hipLaunchKernelGGL(thaDNN_s_softmax_kernel, gridDim, blockDim, 0, 0, output, x, size);
+    hipLaunchKernelGGL(thaDNN_s_softmax_kernel, gridDim, blockDim, 0, 0, x, size);
     CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -282,26 +282,24 @@ thablasStatus_t thaDNN_h2d_s_softmax(float* x, int size)
         return THABLAS_STATUS_ALLOC_FAILED;
     }
 
-    float *output_d, *x_d;
+    float *x_d;
 
     CHECK_HIP(hipSetDevice(0));
-    CHECK_HIP(hipMalloc(&output_d, size * sizeof(float)));
     CHECK_HIP(hipMalloc(&x_d, size * sizeof(float)));
 
     CHECK_HIP(hipMemcpy(x_d, x, size * sizeof(float), hipMemcpyHostToDevice));
 
     thablasHandle_t handle;
     thablasCreate(&handle);
-    thablasStatus_t status = thaDNN_s_softmax(handle, output_d, x_d, size);
+    thablasStatus_t status = thaDNN_s_softmax(handle, x_d, size);
     if (status != THABLAS_STATUS_SUCCESS) {
         printf("THABLAS SOFTMAX ERROR: ERROR on Device\n"); fflush(stdout);
     }
 
-    CHECK_HIP(hipMemcpy(x, output_d, size * sizeof(float), hipMemcpyDeviceToHost));
+    CHECK_HIP(hipMemcpy(x, x_d, size * sizeof(float), hipMemcpyDeviceToHost));
 
     CHECK_HIP(hipDeviceSynchronize());
 
-    CHECK_HIP(hipFree(output_d));
     CHECK_HIP(hipFree(x_d));
 
     return THABLAS_STATUS_SUCCESS;
@@ -367,7 +365,7 @@ thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, int dim, int head_size, in
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((dim + 128 - 1) / 128);
-    thaDNN_s_rope_kernel<<<gridDim, blockDim>>>(dim, head_size, kv_dim, pos, q, k);
+    hipLaunchKernelGGL(thaDNN_s_rope_kernel, gridDim, blockDim, 0, 0, dim, head_size, kv_dim, pos, q, k);
     CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -384,8 +382,15 @@ thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, f
         printf("THABLAS RoPE_relative_positional_encoding ERROR: INVALID ARGUMENT\n"); fflush(stdout);
         return THABLAS_STATUS_ALLOC_FAILED;        
     }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
         printf("THABLAS RoPE_relative_positional_encoding ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
         return THABLAS_STATUS_ALLOC_FAILED;
+    }
 
     float *q_d, *k_d;
 
@@ -447,8 +452,7 @@ thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, i
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((hidden_dim + blockDim.x - 1) / blockDim.x);
-    thaDNN_s_swiglu_kernel<<<gridDim, blockDim>>>(hb, hb2, hidden_dim);
-
+    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, gridDim, blockDim, 0, 0, hb, hb2, hidden_dim);
     CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -622,7 +626,7 @@ thablasStatus_t thaDNN_s_multiheads_3(thablasHandle_t handle, int pos, int n_hea
   }
 
   CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-  // CHECK_HIP(hipMemset(s_xb, 0, dim * sizeof(float)));
+  CHECK_HIP(hipMemset(s_xb, 0, dim * sizeof(float)));
   dim3 blockDim(16, 4);
   dim3 gridDim((pos+1 + 16 - 1) / 16, (n_heads + 4 - 1) / 4);
   // CAUTION: careful playing with [pos]. 
@@ -722,21 +726,22 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
     thablas_status = thaBLAS_h2d_s_matmulvec(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
     // RoPE relative positional encoding: complex-valued rotate q and k in each head
-    for (int i = 0; i < dim; i+=2) {
-      int head_dim = i % head_size;
-      float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-      float val = pos * freq;
-      float fcr = cosf(val);
-      float fci = sinf(val);
-      int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-      for (int v = 0; v < rotn; v++) {
-        float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-        float v0 = vec[i];
-        float v1 = vec[i+1];
-        vec[i]   = v0 * fcr - v1 * fci;
-        vec[i+1] = v0 * fci + v1 * fcr;
-      }
-    }
+    // for (int i = 0; i < dim; i+=2) {
+    //   int head_dim = i % head_size;
+    //   float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+    //   float val = pos * freq;
+    //   float fcr = cosf(val);
+    //   float fci = sinf(val);
+    //   int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+    //   for (int v = 0; v < rotn; v++) {
+    //     float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
+    //     float v0 = vec[i];
+    //     float v1 = vec[i+1];
+    //     vec[i]   = v0 * fcr - v1 * fci;
+    //     vec[i+1] = v0 * fci + v1 * fcr;
+    //   }
+    // }
+    thablas_status = thaDNN_h2d_s_rope(dim, head_size, kv_dim, pos, s->q, s->k);
 
     // multihead attention. iterate over all heads
     {
@@ -772,7 +777,7 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
       }
 
       // PART 3
-      memset(s->xb, 0, dim * sizeof(float));
+      // memset(s->xb, 0, dim * sizeof(float));
       thablas_status = thaDNN_h2d_s_multiheads_3(p, s, head_size, pos, loff, kv_dim, kv_mul);
       // for (h = 0; h < p->n_heads; h++) {
       //   float* att = s->att + h * p->seq_len;
@@ -814,14 +819,15 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
     thablas_status = thaBLAS_h2d_s_matmulvec(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
     // SwiGLU non-linearity
-    for (int i = 0; i < hidden_dim; i++) {
-      float val = s->hb[i];
-      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-      val *= (1.0f / (1.0f + expf(-val)));
-      // elementwise multiply with w3(x)
-      val *= s->hb2[i];
-      s->hb[i] = val;
-    }
+    // for (int i = 0; i < hidden_dim; i++) {
+    //   float val = s->hb[i];
+    //   // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+    //   val *= (1.0f / (1.0f + expf(-val)));
+    //   // elementwise multiply with w3(x)
+    //   val *= s->hb2[i];
+    //   s->hb[i] = val;
+    // }
+    thablas_status = thaDNN_h2d_s_swiglu(s->hb, s->hb2, hidden_dim);
 
     // final matmul to get the output of the ffn
     // matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
@@ -844,4 +850,70 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
   
   output_logits = s->logits;
   return thablas_status;
+}
+
+
+thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits) {
+    // a few convenience variables
+    Config* p = &transformer->config;
+    TransformerWeights* w = &transformer->weights;
+    RunState* s = &transformer->state;
+    float *x = s->x;
+    int dim = p->dim;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    int hidden_dim =  p->hidden_dim;
+    int head_size = dim / p->n_heads;
+
+    thablasStatus_t thablas_status = THABLAS_STATUS_SUCCESS;
+
+    // copy the token embedding into x
+    float* content_row = w->token_embedding_table + token * dim;
+    memcpy(x, content_row, dim*sizeof(*x));
+
+    // forward all the layers
+    for(unsigned long long l = 0; l < p->n_layers; l++) {
+        thablas_status = thaDNN_s_rmsnorm(handle, s->xb, x, w->rms_att_weight + l*dim, dim);
+
+        int loff = l * p->seq_len * kv_dim;
+        s->k = s->key_cache + loff + pos * kv_dim;
+        s->v = s->value_cache + loff + pos * kv_dim;
+
+        thablas_status = thaBLAS_s_matmulvec(handle, s->q, s->xb, w->wq + l*dim*dim, dim, dim);
+        thablas_status = thaBLAS_s_matmulvec(handle, s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
+        thablas_status = thaBLAS_s_matmulvec(handle, s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
+
+        thablas_status = thaDNN_s_rope(handle, dim, head_size, kv_dim, pos, s->q, s->k);
+
+        // multihead attention
+        thablas_status = thaDNN_s_multiheads_1(handle, pos, p->n_heads, s->q, s->att, s->key_cache, head_size, p->seq_len, loff, kv_dim, kv_mul);
+        for (int h = 0; h < p->n_heads; h++) {
+            float* att = s->att + h * p->seq_len;
+            thablas_status = thaDNN_s_softmax(handle, att, pos + 1);
+        }
+        thablas_status = thaDNN_s_multiheads_3(handle, pos, p->n_heads, s->xb, s->att, s->value_cache, head_size, p->seq_len, loff, kv_dim, kv_mul, dim);
+        // end multihead attention
+
+        thablas_status = thaBLAS_s_matmulvec(handle, s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
+
+        thablas_status = thaBLAS_s_vecaddvec(handle, x, s->xb2, dim);
+
+        thablas_status = thaDNN_s_rmsnorm(handle, s->xb, x, w->rms_ffn_weight + l*dim, dim);
+
+        thablas_status = thaBLAS_s_matmulvec(handle, s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
+        thablas_status = thaBLAS_s_matmulvec(handle, s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+
+        thablas_status = thaDNN_s_swiglu(handle, s->hb, s->hb2, hidden_dim);
+
+        thablas_status = thaBLAS_s_matmulvec(handle, s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
+
+        thablas_status = thaBLAS_s_vecaddvec(handle, x, s->xb, dim);
+    }
+
+    thablas_status = thaDNN_s_rmsnorm(handle, x, x, w->rms_final_weight, dim);
+
+    thablas_status = thaBLAS_s_matmulvec(handle, s->logits, x, w->wcls, p->dim, p->vocab_size);
+    
+    output_logits = s->logits;
+    return thablas_status;
 }

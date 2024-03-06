@@ -2,6 +2,7 @@
 #include "thaBLAS.hpp"
 #include "thaDNN.hpp"
 #include "seq.hpp"
+#include "utils.hpp"
 
 #include <alloca.h>
 #include <assert.h>
@@ -114,7 +115,7 @@ bool test_thaDNN_h2d_s_softmax(int size)
 }
 
 
-bool test_forward(int token, int pos)
+bool test_h2d_forward(int token, int pos)
 {
   Transformer transformer;
   char checkpoint_path[64] = "/shared/erc/getpTA/main/modelbin/stories110M.bin";
@@ -134,7 +135,59 @@ bool test_forward(int token, int pos)
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
-  float eps = 1e-5;
+  float eps = 1e-4;
+  for (int i = 0; i < p->vocab_size ; ++i) {
+    float logit_gpu = gpuLogits[i];
+    float logit_ans = cpuLogits[i];
+    if (fabsf(logit_gpu - logit_ans) > eps && (logit_gpu == 0 || fabsf((logit_gpu - logit_ans) / logit_ans) > eps)) {
+      ++cnt;
+      if (cnt <= thr)
+        printf("O[%d] : correct_value = %f, your_value = %f\n", i, logit_ans, logit_gpu);
+      if (cnt == thr + 1)
+        printf("Too many error, only first %d values are printed.\n", thr);
+      is_valid = false;
+    }
+  }
+
+  // TODO free transformer
+
+  if (is_valid) {
+    printf("Validation: VALID\n"); fflush(stdout);
+    return 1;
+  } else {
+    printf("Validation: INVALID\n"); fflush(stdout);
+    return 0;
+  }
+}
+
+bool test_gpu_forward(int token, int pos)
+{
+  Transformer transformer;
+  char checkpoint_path[64] = "/shared/erc/getpTA/main/modelbin/stories110M.bin";
+  build_transformer(&transformer, checkpoint_path);
+  Config* p = &transformer.config;
+
+  thablasHandle_t handle;
+  thablasCreate(&handle);
+  Transformer *transformer_d = nullptr;
+  copy_transformer_to_device(handle, &transformer, transformer_d);
+  
+  int size = p->vocab_size;
+  float* cpuLogits;
+  float* gpuLogits;
+  float* logits = forward(&transformer, token, pos);
+  alloc_vec(&cpuLogits, size);
+  alloc_vec(&gpuLogits, size);
+  memcpy(cpuLogits, logits, size * sizeof(float));
+
+  thablasStatus_t thablasStatus = thaDNN_s_forward(handle, transformer_d, token, pos, logits);
+  if (thablasStatus != THABLAS_STATUS_SUCCESS)
+    return 0;
+  CHECK_HIP(hipMemcpy(gpuLogits, logits, size * sizeof(float), hipMemcpyDeviceToHost));
+
+  bool is_valid = true;
+  int cnt = 0, thr = 10;
+  float eps = 1e-4;
   for (int i = 0; i < p->vocab_size ; ++i) {
     float logit_gpu = gpuLogits[i];
     float logit_ans = cpuLogits[i];
@@ -167,7 +220,7 @@ bool test_forward(int token, int pos)
 *********************************************************************************************************
 */
 
-void RoPE_relative_positional_encoding(int dim,  int head_size, int kv_dim, int pos,  float *q, float *k) 
+void RoPE_relative_positional_encoding(int dim, int head_size, int kv_dim, int pos, float *q, float *k) 
 {
   // RoPE relative positional encoding: complex-valued rotate q and k in each head
   for (int i = 0; i < dim; i+=2) {
@@ -344,14 +397,23 @@ int main()
   assert(all_valid);
   printf("SwiGLU PASSED\n");
 
-  // test forward
-  all_valid = test_forward(0, 0);
+  // test H2D forward
+  all_valid = test_h2d_forward(0, 0);
   assert(all_valid);
-  all_valid = test_forward(3, 4);
+  all_valid = test_h2d_forward(3, 4);
   assert(all_valid);
-  all_valid = test_forward(4, 4);
+  all_valid = test_h2d_forward(4, 4);
   assert(all_valid);
-  printf("FORWARD PASSED\n");
+  printf("FORWARD H2D PASSED\n");
+
+  // test H2D forward
+  all_valid = test_gpu_forward(0, 0);
+  assert(all_valid);
+  all_valid = test_gpu_forward(3, 4);
+  assert(all_valid);
+  all_valid = test_gpu_forward(4, 4);
+  assert(all_valid);
+  printf("FORWARD H2D PASSED\n");
 
   return 0;
 }

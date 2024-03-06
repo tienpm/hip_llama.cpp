@@ -332,3 +332,8 @@ thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int
 {
     return thaBLAS_h2d_s_matmul(M, 1, K, A, B, C);
 }
+
+thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M)
+{
+    return thaBLAS_s_matmul(handle, M, 1, K, A, B, C);
+}

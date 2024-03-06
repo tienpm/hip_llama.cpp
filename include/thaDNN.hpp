@@ -15,7 +15,7 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm(float* o, float* x, float* weight, int size
 // _s_ = single persion (float)
 // input: output, x allocated on device
 // input: size = 32000
-thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x, int size);
+thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* x, int size);
 
 // _h2d_ = host to device
 // x allocated on Host
@@ -23,6 +23,8 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
 thablasStatus_t thaDNN_h2d_s_softmax(float* x, int size);
 
 thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int pos, float* &output_logits);
+
+thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits);
 
 thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, float *q, float *k);
 

@@ -1,4 +1,5 @@
 #include "hip_helper.hpp"
+#include "thaBLAS.hpp"
 #include "models.hpp"
 
 #include <stdio.h>
@@ -41,3 +42,5 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
 void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights, int* fd, float** data, ssize_t* file_size);
 
 void build_transformer(Transformer *t, char* checkpoint_path);
+
+void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d);
