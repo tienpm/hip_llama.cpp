@@ -707,6 +707,27 @@ int blockReduceSum(int val) {
   return val;
 }
 
+__inline__ __device__
+int blockReduceSum(int val) {
+
+  static __shared__ int shared[32]; // Shared mem for 32 partial sums
+  int lane = threadIdx.x % warpSize;
+  int wid = threadIdx.x / warpSize;
+
+  val = warpReduceSum(val);     // Each warp performs partial reduction
+
+  if (lane==0) shared[wid]=val; // Write reduced value to shared memory
+
+  __syncthreads();              // Wait for all partial reductions
+
+  //read from shared memory only if that warp existed
+  val = (threadIdx.x < blockDim.x / warpSize) ? shared[lane] : 0;
+
+  if (wid==0) val = warpReduceSum(val); //Final reduce within first warp
+
+  return val;
+}
+
 __global__ void deviceReduceWarpAtomicKernel(int *in, int* out, int N) {
   int sum = int(0);
   for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
@@ -719,6 +740,17 @@ __global__ void deviceReduceWarpAtomicKernel(int *in, int* out, int N) {
     atomicAdd(out, sum);
 }
 
+__global__ void deviceReduceBlockAtomicKernel(int *in, int* out, int N) {
+  int sum = int(0);
+  for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+      i < N; 
+      i += blockDim.x * gridDim.x) {
+    sum += in[i];
+  }
+  sum = blockReduceSum(sum);
+  if (threadIdx.x == 0)
+    atomicAdd(out, sum);
+}
 
 // modify deviceReduceBlockAtomicKernel to caculate sum of squares
 __global__ void thaDNN_s_rmsnorm_kernel_v2(float* o, float* x, float* weight, int size)
