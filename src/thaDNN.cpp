@@ -740,6 +740,7 @@ __global__ void deviceReduceWarpAtomicKernel(int *in, int* out, int N) {
     atomicAdd(out, sum);
 }
 
+// we can use blockReduceSum, but it have lower performance than warpReduceSum
 __global__ void deviceReduceBlockAtomicKernel(int *in, int* out, int N) {
   int sum = int(0);
   for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
