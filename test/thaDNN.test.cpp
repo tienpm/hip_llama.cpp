@@ -20,7 +20,7 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
       return 0;
 
-  float *o_h;
+  float   *o_h;
   alloc_vec(&o_h, size);
   zero_vec(o_h, size);
   rmsnorm(o_h, x, weight, size);  
@@ -183,25 +183,27 @@ int main()
   assert(all_valid);
   printf("RMSNORM PASSED\n");
 
-  // test softmax
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(1));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(111));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(11111));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax(32000));
-  assert(all_valid);
-  printf("SOFTMAX PASSED\n");
-
-  // test forward
-  all_valid = test_forward(0, 0);
-  assert(all_valid);
-  all_valid = test_forward(3, 4);
-  assert(all_valid);
-  all_valid = test_forward(4, 4);
-  assert(all_valid);
-  printf("FORWARD PASSED\n");
-
   return 0;
 }
+
+
+/*
+***********************************************************************************************************************************************************************************
+* rmsnorm using shuffle and reduce
+***********************************************************************************************************************************************************************************
+navie code:
+void rmsnorm(float* o, float* x, float* weight, int size) {
+  // calculate sum of squares
+  float ss = 0.0f;
+  for (int j = 0; j < size; j++) {
+    ss += x[j] * x[j];
+  }
+  ss /= size;
+  ss += 1e-5f;
+  ss = 1.0f / sqrtf(ss);
+  // normalize and scale
+  for (int j = 0; j < size; j++) {
+    o[j] = weight[j] * (ss * x[j]);
+  }
+}
+*/

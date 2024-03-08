@@ -7,6 +7,7 @@
 #include <omp.h>
 #include <hipblas.h>
 
+#define WARP_SIZE 64
 // size = 1 -> 16384
 #define RMS_LOCAL_BANK_SIZE 8
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
@@ -650,3 +651,88 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
   output_logits = s->logits;
   return thablas_status;
 }
+
+
+
+/*
+***********************************************************************************************************************************************************************************
+* rmsnorm using shuffle and reduce
+***********************************************************************************************************************************************************************************
+navie code:
+void rmsnorm(float* o, float* x, float* weight, int size) {
+  // calculate sum of squares
+  float ss = 0.0f;
+  for (int j = 0; j < size; j++) {
+    ss += x[j] * x[j];
+  }
+  ss /= size;
+  ss += 1e-5f;
+  ss = 1.0f / sqrtf(ss);
+  // normalize and scale
+  for (int j = 0; j < size; j++) {
+    o[j] = weight[j] * (ss * x[j]);
+  }
+}
+*/
+
+
+// biến warpSize là biến built-in của HIP, mặc định là 64
+__inline__ __device__
+int warpReduceSum(int val) {
+  // printf("warpSize: %d\n", warpSize);
+  for (int offset = warpSize/2; offset > 0; offset /= 2) 
+    val += __shfl_down(val, offset);
+  return val;
+}
+
+
+__inline__ __device__
+int blockReduceSum(int val) {
+
+  static __shared__ int shared[64]; // Shared mem for 64 partial sums
+  int lane = threadIdx.x % warpSize;
+  int wid = threadIdx.x / warpSize;
+
+  val = warpReduceSum(val);     // Each warp performs partial reduction
+
+  if (lane==0) shared[wid]=val; // Write reduced value to shared memory
+
+  __syncthreads();              // Wait for all partial reductions
+
+  //read from shared memory only if that warp existed
+  val = (threadIdx.x < blockDim.x / warpSize) ? shared[lane] : 0;
+
+  if (wid==0) val = warpReduceSum(val); //Final reduce within first warp
+
+  return val;
+}
+
+__global__ void deviceReduceWarpAtomicKernel(int *in, int* out, int N) {
+  int sum = int(0);
+  for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+      i < N; 
+      i += blockDim.x * gridDim.x) {
+    sum += in[i];
+  }
+  sum = warpReduceSum(sum);
+  if ((threadIdx.x & (warpSize - 1)) == 0)
+    atomicAdd(out, sum);
+}
+
+
+// modify deviceReduceBlockAtomicKernel to caculate sum of squares
+__global__ void thaDNN_s_rmsnorm_kernel_v2(float* o, float* x, float* weight, int size)
+{
+    const int thread_id = threadIdx.x;
+    const int block_id = blockIdx.x;
+    const int block_size = blockDim.x;
+
+    float ss=0.0f;
+    for (int elem_id = thread_id; elem_id < size; elem_id += block_size){
+        ss += x[elem_id] * x[elem_id];
+    }
+
+    // reduce ss
+    ss 
+}
+
