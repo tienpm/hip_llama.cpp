@@ -165,21 +165,30 @@ void deviceReduce2(int *in, int* out, int N) {
   // deviceReduceSum<<<1, 1024>>>(out, out, blocks);
 }
 
+// biến warpSize là biến built-in của HIP, mặc định là 64
+__inline__ __device__
+float warpReduceSum_float(float val) {
+  // printf("warpSize: %d\n", warpSize);
+  for (int offset = warpSize/2; offset > 0; offset /= 2) 
+    val += __shfl_down(val, offset);
+  return val;
+}
+
 
 // modify deviceReduceBlockAtomicKernel to caculate sum of squares
 __global__ void thaDNN_s_rmsnorm_kernel_v2_ok(float* o, float* x, float* weight, int size)
 {
-    int sum_squares = float(0);
+    float sum_squares = float(0);
     for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
         i < size; 
         i += blockDim.x * gridDim.x) {
         sum_squares += x[i] * x[i];
     }
 
-    sum_squares = warpReduceSum(sum_squares);
+    sum_squares = warpReduceSum_float(sum_squares);
     if ((threadIdx.x & (warpSize - 1)) == 0)
         atomicAdd(o, sum_squares);
-    // syncthreads();
+    // // syncthreads();
     __syncthreads();
 
     float ss = o[0];
@@ -193,20 +202,6 @@ __global__ void thaDNN_s_rmsnorm_kernel_v2_ok(float* o, float* x, float* weight,
         o[i] = weight[i] * (ss * x[i]);
     }
 }
-
-// void test_rmsnorm_v2(float* o, float* x, float* weight, int size)
-// {
-//     dim3 blockDim(512);
-//     dim3 gridDim(1);
-//     thaDNN_s_rmsnorm_kernel_v2<<<gridDim, blockDim>>>(o, x, weight, size);
-// }
-
-// void test_rmsnorm_v3(float* o, float* x, float* weight, int size)
-// {
-//     dim3 blockDim(512);
-//     dim3 gridDim(1);
-//     thaDNN_s_rmsnorm_kernel_v3<<<gridDim, blockDim, 512*sizeof(float)>>>(o, x, weight, size);
-// }
 
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
@@ -229,10 +224,10 @@ int main(){
   float *in, *out, *weight;
   float *out_cpu;
   float *in_h, *out_h, *weight_h;
-  int LEN_ARRAY = 1024*16;
+  int LEN_ARRAY = 512;
   in_h = (float *)malloc(LEN_ARRAY * sizeof(float));
   for (int i = 0; i < LEN_ARRAY; i++){
-    in_h[i] = 0.1;
+    in_h[i] = 0.15;
   }
   out_h = (float *)malloc(LEN_ARRAY * sizeof(float));
 
@@ -257,8 +252,9 @@ int main(){
   dim3 blockDim(512);
   dim3 gridDim(1);
 
-  thaDNN_s_rmsnorm_kernel_v2_ok<<<gridDim, blockDim>>>(out, in, weight, LEN_ARRAY);
-  // thaDNN_s_rmsnorm_kernel_v3<<<gridDim, blockDim, 512*sizeof(float)>>>(out, in, weight, LEN_ARRAY);
+  // thaDNN_s_rmsnorm_kernel_v2_ok<<<gridDim, blockDim>>>(out, in, weight, LEN_ARRAY);
+  
+  thaDNN_s_rmsnorm_kernel_v3<<<gridDim, blockDim, 512*sizeof(float)>>>(out, in, weight, LEN_ARRAY);
   // reduce6<<<gridDim, blockDim, 512*sizeof(float)>>>(in, out, LEN_ARRAY);
   //scpy result from device to host
   CHECK_HIP(hipMemcpy(out_h, out, LEN_ARRAY*sizeof(float), hipMemcpyDeviceToHost));
@@ -289,5 +285,11 @@ int main(){
     printf("Validation: INVALID\n"); fflush(stdout);
   }
 
+
+  // // printf 3 first element of out_h
+  // for (int i = 0; i < 3; i++){
+  //   printf("out_h[%d] = %f\n", i, out[i]);
+  // }
   return 0;
+
 }
