@@ -12,32 +12,84 @@
   }                                                         \
 } while (0)
 
+// template <unsigned int blockSize> 
+__device__ void warpReduce6(volatile float *sdata, unsigned int tid) {
+  int blockSize = blockDim.x;
+  if (blockSize >= 64) sdata[tid] += sdata[tid + 32];
+  if (blockSize >= 32) sdata[tid] += sdata[tid + 16];
+  if (blockSize >= 16) sdata[tid] += sdata[tid + 8];
+  if (blockSize >= 8) sdata[tid] += sdata[tid + 4];
+  if (blockSize >= 4) sdata[tid] += sdata[tid + 2];
+  if (blockSize >= 2) sdata[tid] += sdata[tid + 1];
+}
 
 // template <unsigned int blockSize>
-// __device__ void warpReduce(volatile int *sdata, unsigned int tid) {
-//   if (blockSize >= 64) sdata[tid] += sdata[tid + 32];
-//   if (blockSize >= 32) sdata[tid] += sdata[tid + 16];
-//   if (blockSize >= 16) sdata[tid] += sdata[tid + 8];
-//   if (blockSize >= 8) sdata[tid] += sdata[tid + 4];
-//   if (blockSize >= 4) sdata[tid] += sdata[tid + 2];
-//   if (blockSize >= 2) sdata[tid] += sdata[tid + 1];
-// }
+__global__ void reduce6(float *g_idata, float *g_odata, unsigned int n) 
+{
+  const unsigned int blockSize = blockDim.x;
+  extern __shared__ float sdata[];
+  unsigned int tid = threadIdx.x;
+  unsigned int i = blockIdx.x*(blockSize*2) + tid;
+  unsigned int gridSize = blockSize*2*gridDim.x;
+  sdata[tid] = 0;
+  while (i < n) { sdata[tid] += g_idata[i] + g_idata[i+blockSize]; i += gridSize; }
+  __syncthreads();
+  if (blockSize >= 512) { if (tid < 256) { sdata[tid] += sdata[tid + 256]; } __syncthreads(); }
+  if (blockSize >= 256) { if (tid < 128) { sdata[tid] += sdata[tid + 128]; } __syncthreads(); }
+  if (blockSize >= 128) { if (tid < 64) { sdata[tid] += sdata[tid + 64]; } __syncthreads(); }
+  if (tid < 32) warpReduce6(sdata, tid);
+  if (tid == 0) g_odata[blockIdx.x] = sdata[0];
+}
 
-// template <unsigned int blockSize>
-// __global__ void reduce6(int *g_idata, int *g_odata, unsigned int n) {
-//   extern __shared__ int sdata[];
-//   unsigned int tid = threadIdx.x;
-//   unsigned int i = blockIdx.x*(blockSize*2) + tid;
-//   unsigned int gridSize = blockSize*2*gridDim.x;
-//   sdata[tid] = 0;
-//   while (i < n) { sdata[tid] += g_idata[i] + g_idata[i+blockSize]; i += gridSize; }
-//   __syncthreads();
-//   if (blockSize >= 512) { if (tid < 256) { sdata[tid] += sdata[tid + 256]; } __syncthreads(); }
-//   if (blockSize >= 256) { if (tid < 128) { sdata[tid] += sdata[tid + 128]; } __syncthreads(); }
-//   if (blockSize >= 128) { if (tid < 64) { sdata[tid] += sdata[tid + 64]; } __syncthreads(); }
-//   if (tid < 32) warpReduce<blockSize>(sdata, tid);
-//   if (tid == 0) g_odata[blockIdx.x] = sdata[0];
-// }
+// modify  to caculate sum of squares
+
+__device__ void warpReduce_v3(volatile float *sdata, unsigned int tid) {
+  int blockSize = blockDim.x;
+  // printf("blockSize: %d\n", blockSize);
+  if (blockSize >= 64) sdata[tid] += sdata[tid + 32];
+  if (blockSize >= 32) sdata[tid] += sdata[tid + 16];
+  if (blockSize >= 16) sdata[tid] += sdata[tid + 8];
+  if (blockSize >= 8) sdata[tid] += sdata[tid + 4];
+  if (blockSize >= 4) sdata[tid] += sdata[tid + 2];
+  if (blockSize >= 2) sdata[tid] += sdata[tid + 1];
+}
+
+__global__ void thaDNN_s_rmsnorm_kernel_v3(float* o, float* x, float* weight, int size)
+{
+  int n = size;
+  float *g_idata = x;
+  float *g_odata = o;
+  const unsigned int blockSize = blockDim.x;
+  extern __shared__ float sdata[];
+  
+  unsigned int tid = threadIdx.x;
+  unsigned int i = blockIdx.x*(blockSize*2) + tid;
+  unsigned int gridSize = blockSize*2*gridDim.x;
+  sdata[tid] = 0;
+  while (i < n) { 
+    sdata[tid] = sdata[tid] + g_idata[i]*g_idata[i]  + g_idata[i+blockSize]*g_idata[i+blockSize]; 
+    i += gridSize; }
+
+  __syncthreads();
+  if (blockSize >= 512) { if (tid < 256) { sdata[tid] += sdata[tid + 256]; } __syncthreads(); }
+  if (blockSize >= 256) { if (tid < 128) { sdata[tid] += sdata[tid + 128]; } __syncthreads(); }
+  if (blockSize >= 128) { if (tid < 64) { sdata[tid] += sdata[tid + 64]; } __syncthreads(); }
+  if (tid < 32) warpReduce_v3(sdata, tid);
+  if (tid == 0) g_odata[blockIdx.x] = sdata[0];
+  
+  __syncthreads();
+  float ss = o[0];
+  ss /= size;
+  ss += 1e-5f;
+  ss = 1.0f / sqrtf(ss);
+
+  for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+      i < size; 
+      i += blockDim.x * gridDim.x) {
+    o[i] = weight[i] * (ss * x[i]);
+  }
+
+}
 
 
 // biến warpSize là biến built-in của HIP, mặc định là 64
@@ -115,7 +167,7 @@ void deviceReduce2(int *in, int* out, int N) {
 
 
 // modify deviceReduceBlockAtomicKernel to caculate sum of squares
-__global__ void thaDNN_s_rmsnorm_kernel_v2(float* o, float* x, float* weight, int size)
+__global__ void thaDNN_s_rmsnorm_kernel_v2_ok(float* o, float* x, float* weight, int size)
 {
     int sum_squares = float(0);
     for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
@@ -142,12 +194,20 @@ __global__ void thaDNN_s_rmsnorm_kernel_v2(float* o, float* x, float* weight, in
     }
 }
 
-void test_rmsnorm_v2(float* o, float* x, float* weight, int size)
-{
-    dim3 blockDim(512);
-    dim3 gridDim(1);
-    thaDNN_s_rmsnorm_kernel_v2<<<gridDim, blockDim>>>(o, x, weight, size);
-}
+// void test_rmsnorm_v2(float* o, float* x, float* weight, int size)
+// {
+//     dim3 blockDim(512);
+//     dim3 gridDim(1);
+//     thaDNN_s_rmsnorm_kernel_v2<<<gridDim, blockDim>>>(o, x, weight, size);
+// }
+
+// void test_rmsnorm_v3(float* o, float* x, float* weight, int size)
+// {
+//     dim3 blockDim(512);
+//     dim3 gridDim(1);
+//     thaDNN_s_rmsnorm_kernel_v3<<<gridDim, blockDim, 512*sizeof(float)>>>(o, x, weight, size);
+// }
+
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
   // calculate sum of squares
@@ -166,12 +226,13 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
 
 
 int main(){
-  float *in, *out, *weight, *out_cpu;
+  float *in, *out, *weight;
+  float *out_cpu;
   float *in_h, *out_h, *weight_h;
-  int LEN_ARRAY = 1024*512;
+  int LEN_ARRAY = 1024*16;
   in_h = (float *)malloc(LEN_ARRAY * sizeof(float));
   for (int i = 0; i < LEN_ARRAY; i++){
-    in_h[i] = 1;
+    in_h[i] = 0.1;
   }
   out_h = (float *)malloc(LEN_ARRAY * sizeof(float));
 
@@ -179,6 +240,9 @@ int main(){
   for (int i = 0; i < LEN_ARRAY; i++){
     weight_h[i] = 2.5;
   }
+    // check cpu
+  out_cpu = (float *)malloc(LEN_ARRAY * sizeof(float));
+  rmsnorm(out_cpu, in_h, weight_h, LEN_ARRAY);
 
   CHECK_HIP(hipMalloc((void**)&in, LEN_ARRAY*sizeof(float)));
   CHECK_HIP(hipMalloc((void**)&out, LEN_ARRAY*sizeof(float)));
@@ -189,25 +253,22 @@ int main(){
   CHECK_HIP(hipMemcpy(out, out_h, LEN_ARRAY*sizeof(float), hipMemcpyHostToDevice));
   CHECK_HIP(hipMemcpy(weight, weight_h, LEN_ARRAY*sizeof(float), hipMemcpyHostToDevice));
   
-  test_rmsnorm_v2(out, in, weight, LEN_ARRAY);
+  // apply reduce6
+  dim3 blockDim(512);
+  dim3 gridDim(1);
 
+  thaDNN_s_rmsnorm_kernel_v2_ok<<<gridDim, blockDim>>>(out, in, weight, LEN_ARRAY);
+  // thaDNN_s_rmsnorm_kernel_v3<<<gridDim, blockDim, 512*sizeof(float)>>>(out, in, weight, LEN_ARRAY);
+  // reduce6<<<gridDim, blockDim, 512*sizeof(float)>>>(in, out, LEN_ARRAY);
+  //scpy result from device to host
   CHECK_HIP(hipMemcpy(out_h, out, LEN_ARRAY*sizeof(float), hipMemcpyDeviceToHost));
+  CHECK_HIP(hipDeviceSynchronize());
 
-  //prinft 33 first value of out
-  for (int i = 0; i < 3; i++) {
-    printf("out[%d] = %f\n", i, out_h[i]);
-  }
 
-  // run on CPU
-  out_cpu = (float *)malloc(LEN_ARRAY * sizeof(float));
-  rmsnorm(out_cpu, in_h, weight_h, LEN_ARRAY);
-  for (int i = 0; i < 3; i++) {
-    printf("out_cpu[%d] = %f\n", i, out_cpu[i]);
-  }
-
-  //compare 
-  bool is_valid = true;
-  int cnt = 0, thr = 10;
+  
+  // compare result
+  
+  int cnt = 0 , thr = 10;
   float eps = 1e-5;
   for (int i = 0; i < LEN_ARRAY; ++i) {
     float o_gpu = out_h[i];
@@ -219,18 +280,14 @@ int main(){
         printf("O[%d] : correct_value = %f, your_value = %f\n", i, o_ans, o_gpu);
       if (cnt == thr + 1)
         printf("Too many error, only first %d values are printed.\n", thr);
-      is_valid = false;
     }
   }
 
-  if (is_valid) {
+  if (cnt == 0) {
     printf("Validation: VALID\n"); fflush(stdout);
   } else {
     printf("Validation: INVALID\n"); fflush(stdout);
   }
-
-
-
 
   return 0;
 }

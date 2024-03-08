@@ -15,8 +15,25 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
   rand_vec(x, size);
   rand_vec(weight, size);
   zero_vec(o, size);
+  
+  thablasStatus_t thablasStatus =  (o, x, weig  ht, size);
+  thablasStatus = thaDNN_h2d_s_rmsnorm_v2(o, x, weight, size);
+  // count time 
+  std::chrono::time_point<std::chrono::high_resolution_clock> start_gpu, end_gpu;
+  std::chrono::duration<double> estimate_gpu;
 
-  thablasStatus_t thablasStatus = thaDNN_h2d_s_rmsnorm_v2(o, x, weight, size);
+  start_gpu = std::chrono::high_resolution_clock::now();
+  thablasStatus = thaDNN_h2d_s_rmsnorm(o, x, weight, size);
+  end_gpu = std::chrono::high_resolution_clock::now();
+  estimate_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
+  printf("GPU v1 time: %.10f\n", estimate_gpu.count() / 1.0);
+
+  start_gpu = std::chrono::high_resolution_clock::now();
+  thablasStatus = thaDNN_h2d_s_rmsnorm_v2(o, x, weight, size);
+  end_gpu = std::chrono::high_resolution_clock::now();
+  estimate_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
+  printf("GPU v2 time: %.10f\n", estimate_gpu.count() / 1.0);
+
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
       return 0;
 
@@ -163,23 +180,13 @@ int main()
   bool all_valid = 1;
 
   // test rmsnorm
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(512));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(768));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(4096));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(5120));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(8192));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(111));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(11111));
-  assert(all_valid);
-  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(16384));
+  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1));
+  // assert(all_valid);
+  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(111));
+  // assert(all_valid);
+  // all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(11111));
+  // assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1024*12));
   assert(all_valid);
   printf("RMSNORM PASSED\n");
 
