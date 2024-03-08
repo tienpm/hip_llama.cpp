@@ -653,7 +653,6 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
 }
 
 
-
 /*
 ***********************************************************************************************************************************************************************************
 * rmsnorm using shuffle and reduce
@@ -707,38 +706,7 @@ int blockReduceSum(int val) {
   return val;
 }
 
-__inline__ __device__
-int blockReduceSum(int val) {
 
-  static __shared__ int shared[32]; // Shared mem for 32 partial sums
-  int lane = threadIdx.x % warpSize;
-  int wid = threadIdx.x / warpSize;
-
-  val = warpReduceSum(val);     // Each warp performs partial reduction
-
-  if (lane==0) shared[wid]=val; // Write reduced value to shared memory
-
-  __syncthreads();              // Wait for all partial reductions
-
-  //read from shared memory only if that warp existed
-  val = (threadIdx.x < blockDim.x / warpSize) ? shared[lane] : 0;
-
-  if (wid==0) val = warpReduceSum(val); //Final reduce within first warp
-
-  return val;
-}
-
-__global__ void deviceReduceWarpAtomicKernel(int *in, int* out, int N) {
-  int sum = int(0);
-  for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
-      i < N; 
-      i += blockDim.x * gridDim.x) {
-    sum += in[i];
-  }
-  sum = warpReduceSum(sum);
-  if ((threadIdx.x & (warpSize - 1)) == 0)
-    atomicAdd(out, sum);
-}
 
 // we can use blockReduceSum, but it have lower performance than warpReduceSum
 __global__ void deviceReduceBlockAtomicKernel(int *in, int* out, int N) {
@@ -753,19 +721,116 @@ __global__ void deviceReduceBlockAtomicKernel(int *in, int* out, int N) {
     atomicAdd(out, sum);
 }
 
+__global__ void deviceReduceWarpAtomicKernel(int *in, int* out, int N) {
+  int sum = int(0);
+  for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+      i < N; 
+      i += blockDim.x * gridDim.x) {
+    sum += in[i];
+  }
+  sum = warpReduceSum(sum);
+  if ((threadIdx.x & (warpSize - 1)) == 0)
+    atomicAdd(out, sum);
+}
+
+
 // modify deviceReduceBlockAtomicKernel to caculate sum of squares
 __global__ void thaDNN_s_rmsnorm_kernel_v2(float* o, float* x, float* weight, int size)
 {
-    const int thread_id = threadIdx.x;
-    const int block_id = blockIdx.x;
-    const int block_size = blockDim.x;
-
-    float ss=0.0f;
-    for (int elem_id = thread_id; elem_id < size; elem_id += block_size){
-        ss += x[elem_id] * x[elem_id];
+    int sum_squares = float(0);
+    for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+        i < size; 
+        i += blockDim.x * gridDim.x) {
+        sum_squares += x[i] * x[i];
     }
 
-    // reduce ss
-    ss 
+    sum_squares = warpReduceSum(sum_squares);
+    if ((threadIdx.x & (warpSize - 1)) == 0)
+        atomicAdd(o, sum_squares);
+    // syncthreads();
+    __syncthreads();
+
+    float ss = o[0];
+    ss /= size;
+    ss += 1e-5f;
+    ss = 1.0f / sqrtf(ss);
+
+    for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+        i < size; 
+        i += blockDim.x * gridDim.x) {
+        o[i] = weight[i] * (ss * x[i]);
+    }
 }
+
+
+// '_s_' = single persion (float)
+// input: o, x, weight allocated on device
+// input: size = 1 -> 16384
+thablasStatus_t thaDNN_s_rmsnorm_v2(thablasHandle_t handle, float* o, float* x, float* weight, int size) 
+{
+    if (size==0 || o == nullptr || x == nullptr || weight == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS RMSNORM ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(1024);
+    dim3 gridDim(1);
+    hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel_v2, gridDim, blockDim, 0, 0, o, x, weight, size);
+    
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// '_h2d_ = host to device
+// o, x, weight allocated on Host
+// only run on 1 devices
+thablasStatus_t thaDNN_h2d_s_rmsnorm_v2(float* o, float* x, float* weight, int size) 
+{
+    if (size==0 || o == nullptr || x == nullptr || weight == nullptr)
+    {
+        printf("THABLAS RMSNORM ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS RMSNORM ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *o_d, *x_d, *weight_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&o_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&x_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&weight_d, size * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(x_d, x, size * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(weight_d, weight, size * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_rmsnorm_v2(handle, o_d, x_d, weight_d, size);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS RMSNORM ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(o, o_d, size * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(o_d));
+    CHECK_HIP(hipFree(x_d));
+    CHECK_HIP(hipFree(weight_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
 

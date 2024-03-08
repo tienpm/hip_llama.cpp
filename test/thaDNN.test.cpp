@@ -16,7 +16,7 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
   rand_vec(weight, size);
   zero_vec(o, size);
 
-  thablasStatus_t thablasStatus = thaDNN_h2d_s_rmsnorm(o, x, weight, size);
+  thablasStatus_t thablasStatus = thaDNN_h2d_s_rmsnorm_v2(o, x, weight, size);
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
       return 0;
 
@@ -186,24 +186,3 @@ int main()
   return 0;
 }
 
-
-/*
-***********************************************************************************************************************************************************************************
-* rmsnorm using shuffle and reduce
-***********************************************************************************************************************************************************************************
-navie code:
-void rmsnorm(float* o, float* x, float* weight, int size) {
-  // calculate sum of squares
-  float ss = 0.0f;
-  for (int j = 0; j < size; j++) {
-    ss += x[j] * x[j];
-  }
-  ss /= size;
-  ss += 1e-5f;
-  ss = 1.0f / sqrtf(ss);
-  // normalize and scale
-  for (int j = 0; j < size; j++) {
-    o[j] = weight[j] * (ss * x[j]);
-  }
-}
-*/

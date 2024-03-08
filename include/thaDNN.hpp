@@ -23,3 +23,5 @@ thablasStatus_t thaDNN_s_softmax(thablasHandle_t handle, float* output, float* x
 thablasStatus_t thaDNN_h2d_s_softmax(float* x, int size);
 
 thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int pos, float* &output_logits);
+
+thablasStatus_t thaDNN_h2d_s_rmsnorm_v2(float* o, float* x, float* weight, int size);
