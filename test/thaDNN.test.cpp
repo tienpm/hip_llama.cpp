@@ -413,7 +413,7 @@ int main()
   assert(all_valid);
   all_valid = test_gpu_forward(4, 4);
   assert(all_valid);
-  printf("FORWARD H2D PASSED\n");
+  printf("FORWARD GPU PASSED\n");
 
   return 0;
 }
