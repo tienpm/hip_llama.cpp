@@ -860,7 +860,7 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
     RunState* s = &transformer->state;
     float *x = s->x;
     int dim = p->dim;
-    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 
     int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
@@ -879,9 +879,9 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
         s->k = s->key_cache + loff + pos * kv_dim;
         s->v = s->value_cache + loff + pos * kv_dim;
 
-        thablas_status = thaBLAS_s_matmulvec(handle, s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        thablas_status = thaBLAS_s_matmulvec(handle, s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        thablas_status = thaBLAS_s_matmulvec(handle, s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->q, s->xb, w->wq + l*dim*dim, dim, dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
         thablas_status = thaDNN_s_rope(handle, dim, head_size, kv_dim, pos, s->q, s->k);
 
@@ -894,25 +894,25 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
         thablas_status = thaDNN_s_multiheads_3(handle, pos, p->n_heads, s->xb, s->att, s->value_cache, head_size, p->seq_len, loff, kv_dim, kv_mul, dim);
         // end multihead attention
 
-        thablas_status = thaBLAS_s_matmulvec(handle, s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
 
         thablas_status = thaBLAS_s_vecaddvec(handle, x, s->xb2, dim);
 
         thablas_status = thaDNN_s_rmsnorm(handle, s->xb, x, w->rms_ffn_weight + l*dim, dim);
 
-        thablas_status = thaBLAS_s_matmulvec(handle, s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        thablas_status = thaBLAS_s_matmulvec(handle, s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
         thablas_status = thaDNN_s_swiglu(handle, s->hb, s->hb2, hidden_dim);
 
-        thablas_status = thaBLAS_s_matmulvec(handle, s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
+        thablas_status = thaDNN_s_matmulvec_v2(handle, s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
 
         thablas_status = thaBLAS_s_vecaddvec(handle, x, s->xb, dim);
     }
 
     thablas_status = thaDNN_s_rmsnorm(handle, x, x, w->rms_final_weight, dim);
 
-    thablas_status = thaBLAS_s_matmulvec(handle, s->logits, x, w->wcls, p->dim, p->vocab_size);
+    thablas_status = thaDNN_s_matmulvec_v2(handle, s->logits, x, w->wcls, p->dim, p->vocab_size);
     
     output_logits = s->logits;
     return thablas_status;
