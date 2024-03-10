@@ -399,8 +399,8 @@ thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B
     }
 
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(MAX_BLOCK_SIZE/4, 4);
-    dim3 gridDim(M / 4);
+    dim3 blockDim(MAX_BLOCK_SIZE);
+    dim3 gridDim(M);
 
     hipLaunchKernelGGL(thaDNN_s_matmulvec_v2_kernel, gridDim, blockDim, 0, 0, C, B, A, K, M);
     CHECK_HIP(hipGetLastError());
