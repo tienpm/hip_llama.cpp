@@ -30,3 +30,24 @@
 *.exe
 *.out
 *.app
+
+# output files
+assets/out/
+!assets/out/.gitkeep
+build/apps/
+build/objects/
+
+# ingored files binary
+*.png
+*.jpg
+*.jpeg
+
+./test/raw/*
+test/raw/*
+
+./profile
+./profile/*
+
+./.vscode
+/.vscode/*
+/.vscode 
