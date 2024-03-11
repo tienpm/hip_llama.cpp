@@ -42,3 +42,8 @@ build/objects/
 *.jpg
 *.jpeg
 
+./profile
+./profile/*
+
+./.vscode
+./.vscode/*
