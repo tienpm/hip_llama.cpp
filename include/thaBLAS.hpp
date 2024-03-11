@@ -1,5 +1,7 @@
 #pragma once
 
+#include <hip/hip_runtime.h>
+
 typedef enum
 {
     THABLAS_STATUS_SUCCESS           = 0, /**< Function succeeds */
@@ -19,8 +21,7 @@ typedef enum
 typedef struct 
 {
     int current_gpu_id;
-    // device_id
-    // stream_id
+    hipStream_t stream_;
 } thablasHandle_t;
 
 thablasStatus_t thablasCreate(thablasHandle_t* handle);

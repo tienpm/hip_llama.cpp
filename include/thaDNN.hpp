@@ -28,7 +28,8 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm_v2(float* o, float* x, float* weight, int s
 
 thablasStatus_t thaDNN_h2d_s_rmsnorm_v3(float* o, float* x, float* weight, int size);
 
-thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits);
+// thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits);
+thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, Transformer* transformer, int token, int pos, float* &output_logits);
 
 thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, float *q, float *k);
 

@@ -706,11 +706,15 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
   }
 
   int vocab_size = transformer->config.vocab_size;
-  thablasHandle_t handle;
-  thablasCreate(&handle);
+  thablasHandle_t handle1, handle2, handle3;
+  thablasCreate(&handle1);
+  thablasCreate(&handle2);
+  thablasCreate(&handle3);
   Transformer *transformer_d = nullptr;
-  copy_transformer_to_device(handle, transformer, transformer_d);
-  float *logits = (float*)malloc(vocab_size * sizeof(float));
+  copy_transformer_to_device(handle1, transformer, transformer_d);
+  // float *logits = (float*)malloc(vocab_size * sizeof(float));
+  float *logits;
+  CHECK_HIP(hipHostMalloc(&logits, vocab_size * sizeof(float)));
 
   // Loop for the multiple requests
   for(int idx = 0; idx < requests->num_reqs; idx++) {
@@ -736,8 +740,9 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     while (pos < steps) {
       // forward the transformer to get logits for the next token
       float* logits_d = nullptr;
-      tha_status = thaDNN_s_forward(handle, transformer_d, token, pos, logits_d);
+      tha_status = thaDNN_s_forward(handle1, handle2, handle3, transformer_d, token, pos, logits_d);
       CHECK_HIP(hipMemcpy(logits, logits_d, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      CHECK_HIP(hipDeviceSynchronize());
 
       // advance the state machine
       if (pos < num_prompt_tokens - 1) {
@@ -785,7 +790,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1) {
       long end = time_in_ms();
-      fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
+      fprintf(stderr, "\nachieved tok/s: %f\n\n", (pos-1) / (double)(end-start)*1000);
       gen_cnt += pos-1;
     }
   }

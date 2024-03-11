@@ -16,6 +16,8 @@ thablasStatus_t thablasCreate(thablasHandle_t* handle)
     CHECK_HIP(hipGetDevice(&current_gpu_id));
     handle->current_gpu_id = current_gpu_id;
 
+    CHECK_HIP(hipStreamCreate(&handle->stream_));
+
     return THABLAS_STATUS_SUCCESS;
 }
 

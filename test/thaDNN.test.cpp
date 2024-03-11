@@ -199,10 +199,12 @@ bool test_gpu_forward(int token, int pos)
   build_transformer(&transformer, checkpoint_path);
   Config* p = &transformer.config;
 
-  thablasHandle_t handle;
-  thablasCreate(&handle);
+  thablasHandle_t handle1, handle2, handle3;
+  thablasCreate(&handle1);
+  thablasCreate(&handle2);
+  thablasCreate(&handle3);
   Transformer *transformer_d = nullptr;
-  copy_transformer_to_device(handle, &transformer, transformer_d);
+  copy_transformer_to_device(handle1, &transformer, transformer_d);
   
   int size = p->vocab_size;
   float* cpuLogits;
@@ -212,7 +214,7 @@ bool test_gpu_forward(int token, int pos)
   alloc_vec(&gpuLogits, size);
   memcpy(cpuLogits, logits, size * sizeof(float));
 
-  thablasStatus_t thablasStatus = thaDNN_s_forward(handle, transformer_d, token, pos, logits);
+  thablasStatus_t thablasStatus = thaDNN_s_forward(handle1, handle2, handle3, transformer_d, token, pos, logits);
   if (thablasStatus != THABLAS_STATUS_SUCCESS)
     return 0;
   CHECK_HIP(hipMemcpy(gpuLogits, logits, size * sizeof(float), hipMemcpyDeviceToHost));
