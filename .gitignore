@@ -44,3 +44,10 @@ build/objects/
 
 # ./test/raw/*
 # test/raw/*
+
+./profile
+./profile/*
+
+./.vscode
+/.vscode/*
+/.vscode 

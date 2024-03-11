@@ -1123,7 +1123,6 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm_v3(float* o, float* x, float* weight, int s
     return THABLAS_STATUS_SUCCESS;
 }
 
-
 thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits) {
     // a few convenience variables
     Config* p = &transformer->config;
