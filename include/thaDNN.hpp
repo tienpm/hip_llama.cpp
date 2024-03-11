@@ -24,6 +24,10 @@ thablasStatus_t thaDNN_h2d_s_softmax(float* x, int size);
 
 thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int pos, float* &output_logits);
 
+thablasStatus_t thaDNN_h2d_s_rmsnorm_v2(float* o, float* x, float* weight, int size);
+
+thablasStatus_t thaDNN_h2d_s_rmsnorm_v3(float* o, float* x, float* weight, int size);
+
 thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits);
 
 thablasStatus_t thaDNN_h2d_s_rope(int dim, int head_size, int kv_dim, int pos, float *q, float *k);

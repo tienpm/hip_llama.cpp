@@ -7,6 +7,7 @@
 #include <omp.h>
 #include <hipblas.h>
 
+#define WARP_SIZE 64
 // size = 1 -> 16384
 #define RMS_LOCAL_BANK_SIZE 8
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
@@ -852,6 +853,275 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
   return thablas_status;
 }
 
+/*
+***********************************************************************************************************************************************************************************
+* rmsnorm using shuffle and reduce
+***********************************************************************************************************************************************************************************
+*/
+
+// biến warpSize là biến built-in của HIP, mặc định là 64
+__inline__ __device__
+float warpReduceSum(float val) {
+  // printf("warpSize: %d\n", warpSize);
+  for (int offset = warpSize/2; offset > 0; offset /= 2) 
+    val += __shfl_down(val, offset);
+  return val;
+}
+
+__device__ float warp_reduce_sum(float val)
+{
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
+        val += __shfl_xor(val, offset);
+    return val;
+}
+
+__device__ float block_reduce_sum(float val) 
+{
+    static __shared__ float shared[MAX_BLOCK_SIZE / WARP_SIZE]; 
+    int lane = threadIdx.x % WARP_SIZE;
+    int wid = threadIdx.x / WARP_SIZE;
+
+    val = warp_reduce_sum(val); 
+
+    if (lane == 0)
+        shared[wid] = val; 
+
+    __syncthreads(); 
+
+    val = (threadIdx.x < blockDim.x / WARP_SIZE) ? shared[lane] : 0;
+
+    if (wid == 0)
+        val = warp_reduce_sum(val); 
+
+    return val;
+}
+
+// modify deviceReduceBlockAtomicKernel to caculate sum of squares
+__global__ void thaDNN_s_rmsnorm_kernel_v2(float* o, float* x, float* weight, int size)
+{
+    int lx = threadIdx.x;
+    // int gx = blockIdx.x;
+    float tmp;
+    float ss = 0.0;
+    __shared__ float total_sum;
+
+    for(int i = lx; i < size; i += blockDim.x) {
+        tmp = x[i];
+        ss += tmp * tmp;
+    }
+
+    ss = block_reduce_sum(ss);
+    
+    if (lx == 0)
+    {
+        ss /= size;
+        ss += 1e-5f;
+        ss = 1.0f / sqrtf(ss);
+        total_sum = ss;
+    }
+    __syncthreads();
+
+    ss = total_sum;
+    for(int i = lx; i < size; i += blockDim.x) {
+        o[i] = weight[i] * (ss * x[i]);
+    }
+}
+
+// '_s_' = single persion (float)
+// input: o, x, weight allocated on device
+// input: size = 1 -> 16384
+thablasStatus_t thaDNN_s_rmsnorm_v2(thablasHandle_t handle, float* o, float* x, float* weight, int size) 
+{
+    if (size==0 || o == nullptr || x == nullptr || weight == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS RMSNORM ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(1024);
+    dim3 gridDim(1);
+    hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel_v2, gridDim, blockDim, 0, 0, o, x, weight, size);
+    
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// '_h2d_ = host to device
+// o, x, weight allocated on Host
+// only run on 1 devices
+thablasStatus_t thaDNN_h2d_s_rmsnorm_v2(float* o, float* x, float* weight, int size) 
+{
+    if (size==0 || o == nullptr || x == nullptr || weight == nullptr)
+    {
+        printf("THABLAS RMSNORM ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS RMSNORM ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *o_d, *x_d, *weight_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&o_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&x_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&weight_d, size * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(x_d, x, size * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(weight_d, weight, size * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_rmsnorm_v2(handle, o_d, x_d, weight_d, size);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS RMSNORM ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(o, o_d, size * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(o_d));
+    CHECK_HIP(hipFree(x_d));
+    CHECK_HIP(hipFree(weight_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
+/*
+***********************************************************************************************************************************************************************************
+* rmsnorm_v3 using sahed memory and reduce
+***********************************************************************************************************************************************************************************
+*/
+
+// modify  to caculate sum of squares
+
+__device__ void warpReduce_v3(volatile float *sdata, unsigned int tid) {
+  int blockSize = blockDim.x;
+  // printf("blockSize: %d\n", blockSize);
+  if (blockSize >= 64) sdata[tid] += sdata[tid + 32];
+  if (blockSize >= 32) sdata[tid] += sdata[tid + 16];
+  if (blockSize >= 16) sdata[tid] += sdata[tid + 8];
+  if (blockSize >= 8) sdata[tid] += sdata[tid + 4];
+  if (blockSize >= 4) sdata[tid] += sdata[tid + 2];
+  if (blockSize >= 2) sdata[tid] += sdata[tid + 1];
+}
+
+__global__ void thaDNN_s_rmsnorm_kernel_v3(float* o, float* x, float* weight, int size)
+{
+  int n = size;
+  float *g_idata = x;
+  float *g_odata = o;
+  const unsigned int blockSize = blockDim.x;
+  extern __shared__ float sdata[];
+  
+  unsigned int tid = threadIdx.x;
+  unsigned int i = blockIdx.x*(blockSize*2) + tid;
+  unsigned int gridSize = blockSize*2*gridDim.x;
+  sdata[tid] = 0;
+  while (i < n) { 
+    sdata[tid] = sdata[tid] + g_idata[i]*g_idata[i]  + g_idata[i+blockSize]*g_idata[i+blockSize]; 
+    i += gridSize; }
+
+  __syncthreads();
+  if (blockSize >= 512) { if (tid < 256) { sdata[tid] += sdata[tid + 256]; } __syncthreads(); }
+  if (blockSize >= 256) { if (tid < 128) { sdata[tid] += sdata[tid + 128]; } __syncthreads(); }
+  if (blockSize >= 128) { if (tid < 64) { sdata[tid] += sdata[tid + 64]; } __syncthreads(); }
+  if (tid < 32) warpReduce_v3(sdata, tid);
+  if (tid == 0) g_odata[blockIdx.x] = sdata[0];
+  
+  __syncthreads();
+  float ss = o[0];
+  ss /= size;
+  ss += 1e-5f;
+  ss = 1.0f / sqrtf(ss);
+
+  for(int i = blockIdx.x * blockDim.x + threadIdx.x; 
+      i < size; 
+      i += blockDim.x * gridDim.x) {
+    o[i] = weight[i] * (ss * x[i]);
+  }
+
+}
+
+// '_s_' = single persion (float)
+// input: o, x, weight allocated on device
+// input: size = 1 -> 16384
+
+thablasStatus_t thaDNN_s_rmsnorm_v3(thablasHandle_t handle, float* o, float* x, float* weight, int size) 
+{
+    if (size==0 || o == nullptr || x == nullptr || weight == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS RMSNORM ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(512);
+    dim3 gridDim(1);
+    thaDNN_s_rmsnorm_kernel_v3<<<gridDim, blockDim, 512 * sizeof(float)>>>(o, x, weight, size);    
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// '_h2d_ = host to device
+// o, x, weight allocated on Host
+// only run on 1 devices
+
+thablasStatus_t thaDNN_h2d_s_rmsnorm_v3(float* o, float* x, float* weight, int size) 
+{
+    if (size==0 || o == nullptr || x == nullptr || weight == nullptr)
+    {
+        printf("THABLAS RMSNORM ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS RMSNORM ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *o_d, *x_d, *weight_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&o_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&x_d, size * sizeof(float)));
+    CHECK_HIP(hipMalloc(&weight_d, size * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(x_d, x, size * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(weight_d, weight, size * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_rmsnorm_v3(handle, o_d, x_d, weight_d, size);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS RMSNORM ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(o, o_d, size * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(o_d));
+    CHECK_HIP(hipFree(x_d));
+    CHECK_HIP(hipFree(weight_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
 
 thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits) {
     // a few convenience variables
@@ -873,7 +1143,7 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
 
     // forward all the layers
     for(unsigned long long l = 0; l < p->n_layers; l++) {
-        thablas_status = thaDNN_s_rmsnorm(handle, s->xb, x, w->rms_att_weight + l*dim, dim);
+        thablas_status = thaDNN_s_rmsnorm_v2(handle, s->xb, x, w->rms_att_weight + l*dim, dim);
 
         int loff = l * p->seq_len * kv_dim;
         s->k = s->key_cache + loff + pos * kv_dim;
@@ -898,7 +1168,7 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
 
         thablas_status = thaBLAS_s_vecaddvec(handle, x, s->xb2, dim);
 
-        thablas_status = thaDNN_s_rmsnorm(handle, s->xb, x, w->rms_ffn_weight + l*dim, dim);
+        thablas_status = thaDNN_s_rmsnorm_v2(handle, s->xb, x, w->rms_ffn_weight + l*dim, dim);
 
         thablas_status = thaDNN_s_matmulvec_v2(handle, s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         thablas_status = thaDNN_s_matmulvec_v2(handle, s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
@@ -910,7 +1180,7 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
         thablas_status = thaBLAS_s_vecaddvec(handle, x, s->xb, dim);
     }
 
-    thablas_status = thaDNN_s_rmsnorm(handle, x, x, w->rms_final_weight, dim);
+    thablas_status = thaDNN_s_rmsnorm_v2(handle, x, x, w->rms_final_weight, dim);
 
     thablas_status = thaDNN_s_matmulvec_v2(handle, s->logits, x, w->wcls, p->dim, p->vocab_size);
     

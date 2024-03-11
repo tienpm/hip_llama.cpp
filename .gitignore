@@ -42,10 +42,12 @@ build/objects/
 *.jpg
 *.jpeg
 
+# ./test/raw/*
+# test/raw/*
+
 ./profile
 ./profile/*
 
 ./.vscode
 /.vscode/*
 /.vscode 
-

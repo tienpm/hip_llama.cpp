@@ -17,15 +17,47 @@ bool test_thaDNN_h2d_s_rmsnorm(int size)
   rand_vec(x, size);
   rand_vec(weight, size);
   zero_vec(o, size);
+  
+  thablasStatus_t thablasStatus;
+  // thablasStatus = thaDNN_h2d_s_rmsnorm(o, x, weight, size);
+  thablasStatus = thaDNN_h2d_s_rmsnorm_v2(o, x, weight, size);
+  // thablasStatus = thaDNN_h2d_s_rmsnorm_v3(o, x, weight, size);
 
-  thablasStatus_t thablasStatus = thaDNN_h2d_s_rmsnorm(o, x, weight, size);
-  if (thablasStatus != THABLAS_STATUS_SUCCESS)
-      return 0;
-
-  float *o_h;
+  float   *o_h;
   alloc_vec(&o_h, size);
   zero_vec(o_h, size);
   rmsnorm(o_h, x, weight, size);  
+
+  // count time 
+  // std::chrono::time_point<std::chrono::high_resolution_clock> start_gpu, end_gpu;
+  // std::chrono::duration<double> estimate_gpu;
+
+  // start_gpu = std::chrono::high_resolution_clock::now();
+  // thablasStatus = thaDNN_h2d_s_rmsnorm(o, x, weight, size);
+  // end_gpu = std::chrono::high_resolution_clock::now();
+  // estimate_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
+  // printf("GPU v1 time: %.10f\n", estimate_gpu.count() / 1.0);
+
+  // start_gpu = std::chrono::high_resolution_clock::now();
+  // thablasStatus = thaDNN_h2d_s_rmsnorm_v2(o, x, weight, size);
+  // end_gpu = std::chrono::high_resolution_clock::now();
+  // estimate_gpu = std::chrono::duration_cast<std::chrono::nanoseconds>(end_gpu - start_gpu);
+  // printf("GPU rms_norm_v2 time: %.10f\n", estimate_gpu.count() / 1.0);
+
+  // start_gpu = std::chrono::high_resolution_clock::now();
+  // thablasStatus = thaDNN_h2d_s_rmsnorm_v3(o, x, weight, size);
+  // end_gpu = std::chrono::high_resolution_clock::now();
+  // estimate_gpu = std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu);
+  // printf("GPU v3 time: %.10f\n", estimate_gpu.count() / 1.0);
+
+  // start_gpu = std::chrono::high_resolution_clock::now();
+  // rmsnorm(o_h, x, weight, size);
+  // end_gpu = std::chrono::high_resolution_clock::now();
+  // estimate_gpu = std::chrono::duration_cast<std::chrono::nanoseconds>(end_gpu - start_gpu);
+  // printf("CPU rms_norm time: %.10f\n", estimate_gpu.count() / 1.0);
+
+  if (thablasStatus != THABLAS_STATUS_SUCCESS)
+      return 0;
 
   bool is_valid = true;
   int cnt = 0, thr = 10;
@@ -375,6 +407,16 @@ int main()
 {
   bool all_valid = 1;
 
+  // test rmsnorm
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(1));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(111));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(11111));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(256*256));
+  printf("RMS Norm PASSED\n");
+
   // test RoPE_relative_positional_encoding
   all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(256, 16, 64, 0));
   assert(all_valid);
@@ -417,3 +459,4 @@ int main()
 
   return 0;
 }
+
