@@ -332,3 +332,73 @@ thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int
 {
     return thaBLAS_h2d_s_matmul(M, 1, K, A, B, C);
 }
+
+thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M)
+{
+    return thaBLAS_s_matmul(handle, M, 1, K, A, B, C);
+}
+
+
+__device__ float warp_reduce_sum(float val)
+{
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
+        val += __shfl_xor(val, offset);
+    return val;
+}
+
+__device__ float block_reduce_sum(float val) 
+{
+    static __shared__ float shared[MAX_BLOCK_SIZE / WARP_SIZE]; 
+    int lane = threadIdx.x % WARP_SIZE;
+    int wid = threadIdx.x / WARP_SIZE;
+
+    val = warp_reduce_sum(val); 
+
+    if (lane == 0)
+        shared[wid] = val; 
+
+    __syncthreads(); 
+
+    val = (threadIdx.x < blockDim.x / WARP_SIZE) ? shared[lane] : 0;
+
+    if (wid == 0)
+        val = warp_reduce_sum(val); 
+
+    return val;
+}
+
+
+__global__ void thaDNN_s_matmulvec_v2_kernel(float *C, float *B, float *A, int K, int M)
+{
+    int gx = blockIdx.x;
+    int lx = threadIdx.x;
+    float sum = 0.0f;
+    for (int k=lx ; k<K ; k+=blockDim.x)
+    {
+        sum += A[gx*K + k] * B[k];
+    }
+    sum = block_reduce_sum(sum);
+    if (lx == 0)
+    {
+        C[gx] = sum;
+    }
+}
+
+// A[M,K] x B[K,1] = C[1,M]
+thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B, float *A, int K, int M)
+{
+    if (K==0 || M==0 || A == nullptr || B == nullptr || C == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS MAT MUL VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(MAX_BLOCK_SIZE);
+    dim3 gridDim(M);
+
+    hipLaunchKernelGGL(thaDNN_s_matmulvec_v2_kernel, gridDim, blockDim, 0, 0, C, B, A, K, M);
+    CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}

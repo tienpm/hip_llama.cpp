@@ -126,3 +126,7 @@ thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int
 thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size);
 
 thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
+
+thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
+
+thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);

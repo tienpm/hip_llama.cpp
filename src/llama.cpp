@@ -705,6 +705,13 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
   }
 
+  int vocab_size = transformer->config.vocab_size;
+  thablasHandle_t handle;
+  thablasCreate(&handle);
+  Transformer *transformer_d = nullptr;
+  copy_transformer_to_device(handle, transformer, transformer_d);
+  float *logits = (float*)malloc(vocab_size * sizeof(float));
+
   // Loop for the multiple requests
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     std::string gen_str = "";
@@ -728,8 +735,9 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
     while (pos < steps) {
       // forward the transformer to get logits for the next token
-      float* logits = nullptr;
-      tha_status = thaDNN_h2d_s_forward(transformer, token, pos, logits);
+      float* logits_d = nullptr;
+      tha_status = thaDNN_s_forward(handle, transformer_d, token, pos, logits_d);
+      CHECK_HIP(hipMemcpy(logits, logits_d, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
 
       // advance the state machine
       if (pos < num_prompt_tokens - 1) {
