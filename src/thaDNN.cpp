@@ -10,6 +10,8 @@
 #define WARP_SIZE 64
 // size = 1 -> 16384
 #define RMS_LOCAL_BANK_SIZE 8
+// #define FLOAT_MIN  -3.402e+38
+
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
 {
     int j = threadIdx.x;
@@ -999,7 +1001,7 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm_v2(float* o, float* x, float* weight, int s
 
 /*
 ***********************************************************************************************************************************************************************************
-* rmsnorm_v3 using sahed memory and reduce
+* rmsnorm_v3 using shared memory and reduce
 ***********************************************************************************************************************************************************************************
 */
 
@@ -1187,3 +1189,171 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
     output_logits = s->logits;
     return thablas_status;
 }
+
+/*
+*********************************************************************************************************
+* softmax_v2: reduction using shuffle and reduce
+*********************************************************************************************************
+*/
+// void softmax(float* x, int size) {
+//   // find max value (for numerical stability)
+//   float max_val = x[0];
+//   for (int i = 1; i < size; i++) {
+//     if (x[i] > max_val) {
+//       max_val = x[i];
+//     }
+//   }
+//   // exp and sum
+//   float sum = 0.0f;
+//   for (int i = 0; i < size; i++) {
+//     x[i] = expf(x[i] - max_val);
+//     sum += x[i];
+//   }
+//   // normalize
+//   for (int i = 0; i < size; i++) {
+//     x[i] /= sum;
+//   }
+// }
+
+// find max value (for numerical stability)
+__device__ float warp_reduce_max(float val) {
+  for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+    val = max(val, __shfl_xor(val, offset));
+  return val;
+}
+
+__device__ float block_reduce_max(float val) {
+  static __shared__ float shared[32];
+  int lane = threadIdx.x % WARP_SIZE;
+  int wid = threadIdx.x / WARP_SIZE;
+
+  val = warp_reduce_max(val);
+
+  if (lane == 0) shared[wid] = val;
+
+  __syncthreads();
+
+  val = (threadIdx.x < blockDim.x / WARP_SIZE) ? shared[lane] : -3.402e+38;
+
+  if (wid == 0) val = warp_reduce_max(val);
+
+  return val;
+}
+
+__device__ float maxReduce_device(volatile float* data, int n) {
+  int lane_x = threadIdx.x;
+  __shared__ float max_value;
+
+  float val = -3.402e+38;
+
+  for (int i = lane_x; i < n; i += blockDim.x) {
+    val = max(val, data[i]);
+  }
+
+  val = block_reduce_max(val);
+
+  if (lane_x == 0) max_value = val;
+
+  __syncthreads();
+
+  // if (blockIdx.x == 0 && threadIdx.x == 0) max_value_return[0] = max_value;
+  return max_value;
+}
+
+__global__ void thaDNN_s_softmax_kernel_v2(float* x, int size)
+{
+  /*
+  * reduction to find max value 
+  */
+  float max_value_return = -3.402e+38;
+  max_value_return = maxReduce_device(x, size);
+  
+  for (int i = threadIdx.x; i < size; i += blockDim.x) {
+    x[i] = expf(x[i] - max_value_return);
+  }
+
+  float ss = 0.0f;
+  __shared__ float total_sum;
+  for (int i = threadIdx.x; i < size; i += blockDim.x) {
+    ss += x[i];
+  }
+  ss = block_reduce_sum(ss);
+
+    if (threadIdx.x == 0) {
+        total_sum = ss;
+    }
+    __syncthreads();
+  ss = total_sum;
+  for (int i = threadIdx.x; i < size; i += blockDim.x) {
+    x[i] /= ss;
+  }
+}
+
+// _s_ = single persion (float)
+// input: output, x allocated on device
+// input: size = 32000
+thablasStatus_t thaDNN_s_softmax_v2(thablasHandle_t handle, float* x, int size) 
+{
+    if (size==0 || x == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS SOFTMAX ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    
+    dim3 blockDim(1024);
+    dim3 gridDim(1);
+
+    hipLaunchKernelGGL(thaDNN_s_softmax_kernel_v2, gridDim, blockDim, 0, 0, x, size);
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// _h2d_ = host to device
+// output, x allocated on Host
+// only run on 1 devices
+// [size] = 1 -> 32000
+
+thablasStatus_t thaDNN_h2d_s_softmax_v2(float *x, int size)
+{
+    if ( size==0 ||x == nullptr)
+    {
+        printf("THABLAS SOFTMAX V2 ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS SOFTMAX V2 ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *x_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&x_d, size * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(x_d, x, size * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_softmax_v2(handle, x_d, size);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS SOFTMAX V2 ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(x, x_d, size * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(x_d));
+
+    return THABLAS_STATUS_SUCCESS;
+
+}
+
