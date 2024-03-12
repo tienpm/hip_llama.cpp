@@ -196,11 +196,12 @@ cython_debug/
 
 # output files
 /assets/out/**
+!/assets/out/.gitkeep
 !/assets/out/cpu_seq/**
 /build/apps/
 /build/objects/
 /logs/**
-!/log/.gitkeep
+!/logs/.gitkeep
 
 # ingored files binary
 *.png
