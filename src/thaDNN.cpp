@@ -624,6 +624,46 @@ thablasStatus_t thaDNN_s_multiheads_1(thablasHandle_t handle, int pos, int n_hea
   return THABLAS_STATUS_SUCCESS;
 }
 
+__global__ void thaDNN_s_multiheads_1_v2_kernel(int pos, int n_heads, float *s_q, float *s_att, float *s_key_cache, int head_size, int p_seq_len, int loff, int kv_dim, int kv_mul)
+{
+    int lx = threadIdx.x;
+    int t = blockIdx.x;
+    int h = blockIdx.y;
+
+    float score = 0.0f;
+    float* q = s_q + h * head_size;
+    float* k = s_key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+    float* att = s_att + h * p_seq_len;
+    for(int i=lx ; i<head_size ; i+=blockDim.x)
+    {
+        score += q[i] * k[i];
+    }
+
+    score = block_reduce_sum(score);
+    if (lx==0)
+    {
+        att[t] = score / sqrtf(head_size);
+    }
+}
+
+thablasStatus_t thaDNN_s_multiheads_1_v2(thablasHandle_t handle, int pos, int n_heads, float *s_q, float *s_att, float *s_key_cache, int head_size, int seq_len, int loff, int kv_dim, int kv_mul)
+{
+    if (s_q==nullptr || s_att==nullptr || s_key_cache==nullptr || head_size==0 || seq_len==0 || kv_dim==0)
+    {
+        printf("THABLAS MULTI_HEADS_1 ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(MAX_BLOCK_SIZE);
+    dim3 gridDim(pos+1, n_heads);
+    // CAUTION: careful playing with [pos]. 
+    hipLaunchKernelGGL(thaDNN_s_multiheads_1_v2_kernel, gridDim, blockDim, 0, 0, pos, n_heads, s_q, s_att, s_key_cache, head_size, seq_len, loff, kv_dim, kv_mul);
+    CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
 thablasStatus_t thaDNN_h2d_s_multiheads_1(Config* p, RunState* s, int head_size, int pos, int loff, int kv_dim, int kv_mul)
 {
     if (p==nullptr || s==nullptr || head_size==0 || kv_dim==0)
@@ -1248,7 +1288,72 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm_v3(float* o, float* x, float* weight, int s
 //   }
 // }
 
-__global__ void thaDNN_s_softmax_kernel_v2(float* x, int size)
+__global__ void thaDNN_s_multiheads_2_kernel(float* s_att, int size, int seq_len, int n_heads) 
+{
+    int lx = threadIdx.x;
+    int bDim = blockDim.x;
+    int h = blockIdx.x;
+
+    float* x = s_att + h * seq_len;
+
+    float private_max_val = -3.402e+38;
+    __shared__ float max_val;
+    for (int i=lx ; i<size ; i+=bDim)
+    {
+        private_max_val = std::max(private_max_val, x[i]);
+    }
+
+    private_max_val = block_reduce_max(private_max_val);
+    if (lx==0)
+    {
+        max_val = private_max_val;
+    }
+    __syncthreads();
+    private_max_val = max_val;
+    
+    float private_sum = 0.0f, tmp;
+    __shared__ float sum;
+    for (int i =lx; i<size ; i+=bDim) {
+        tmp = expf(x[i] - private_max_val);
+        x[i] = tmp;
+        private_sum += tmp;
+    }
+
+    private_sum = block_reduce_sum(private_sum);
+    if (lx==0)
+    {
+        sum = private_sum;
+    }
+    __syncthreads();
+    private_sum = sum;
+
+    for (int i =lx; i<size ; i+=bDim) {
+        x[i] /= private_sum;
+    }
+}
+
+// _s_ = single persion (float)
+// input: output, x allocated on device
+// input: size = 32000
+thablasStatus_t thaDNN_s_multiheads_2(thablasHandle_t handle, float* s_att, int size, int seq_len, int n_heads) 
+{
+    if (size+seq_len+n_heads==0 || s_att == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS SOFTMAX ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    
+    dim3 blockDim(1024);
+    dim3 gridDim(n_heads);
+
+    hipLaunchKernelGGL(thaDNN_s_multiheads_2_kernel, gridDim, blockDim, 0, 0, s_att, size, seq_len, n_heads);
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+__global__ void thaDNN_s_softmax_v2_kernel(float* x, int size)
 {
     int lx = threadIdx.x;
     int bDim = blockDim.x;
@@ -1305,7 +1410,7 @@ thablasStatus_t thaDNN_s_softmax_v2(thablasHandle_t handle, float* x, int size)
     dim3 blockDim(1024);
     dim3 gridDim(1);
 
-    hipLaunchKernelGGL(thaDNN_s_softmax_kernel_v2, gridDim, blockDim, 0, 0, x, size);
+    hipLaunchKernelGGL(thaDNN_s_softmax_v2_kernel, gridDim, blockDim, 0, 0, x, size);
     CHECK_HIP(hipGetLastError());
     return THABLAS_STATUS_SUCCESS;
 }
@@ -1391,12 +1496,13 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle
         thablas_status = thaDNN_s_rope(handle1, dim, head_size, kv_dim, pos, s->q, s->k);
 
         // multihead attention
-        thablas_status = thaDNN_s_multiheads_1(handle1, pos, p->n_heads, s->q, s->att, s->key_cache, head_size, p->seq_len, loff, kv_dim, kv_mul);
+        thablas_status = thaDNN_s_multiheads_1_v2(handle1, pos, p->n_heads, s->q, s->att, s->key_cache, head_size, p->seq_len, loff, kv_dim, kv_mul);
 
-        for (int h = 0; h < p->n_heads; h++) {
-            float* att = s->att + h * p->seq_len;
-            thablas_status = thaDNN_s_softmax_v2(handle1, att, pos + 1);
-        }
+        // for (int h = 0; h < p->n_heads; h++) {
+        //     float* att = s->att + h * p->seq_len;
+        //     thablas_status = thaDNN_s_softmax_v2(handle1, att, pos + 1);
+        // }
+        thaDNN_s_multiheads_2(handle1, s->att, pos + 1, p->seq_len, p->n_heads);
 
         thablas_status = thaDNN_s_multiheads_3_v2(handle1, pos, p->n_heads, s->xb, s->att, s->value_cache, head_size, p->seq_len, loff, kv_dim, kv_mul, dim);
         // end multihead attention
