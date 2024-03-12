@@ -405,6 +405,83 @@ bool test_swiglu(int hidden_dim){
 
 }
 
+
+bool test_thaDNN_h2d_s_softmax_v2(int size)
+{
+    // create a random vector
+    float *input_cpu;
+    float *input_gpu;
+    
+    alloc_vec(&input_cpu, size);
+    alloc_vec(&input_gpu, size);
+    rand_vec(input_cpu, size);
+
+    // copy the vector to the gpu
+    memcpy(input_gpu, input_cpu, size * sizeof(float));
+
+    // run the function on the gpu
+    
+    //init start, end, duration for time count
+    std :: chrono :: time_point < std :: chrono :: high_resolution_clock > start_gpu, end_gpu;
+    std :: chrono :: duration < double > estimate_gpu;
+    thablasStatus_t thablasStatus;  
+
+    // warm up kernel
+    thablasStatus = thaDNN_h2d_s_softmax_v2(input_gpu, size);
+    thablasStatus = thaDNN_h2d_s_softmax(input_gpu, size);
+
+    // evaluate time
+    start_gpu = std :: chrono :: high_resolution_clock :: now();
+    thablasStatus = thaDNN_h2d_s_softmax(input_gpu, size);
+    end_gpu = std :: chrono :: high_resolution_clock :: now();
+    estimate_gpu = std :: chrono :: duration_cast < std :: chrono :: microseconds > (end_gpu - start_gpu);
+    printf("GPU v1 time: %.10f\n", estimate_gpu.count() / 1.0);
+
+    memcpy(input_gpu, input_cpu, size * sizeof(float));
+    start_gpu = std :: chrono :: high_resolution_clock :: now();
+    thablasStatus = thaDNN_h2d_s_softmax_v2(input_gpu, size);
+    end_gpu = std :: chrono :: high_resolution_clock :: now();
+    estimate_gpu = std :: chrono :: duration_cast < std :: chrono :: microseconds > (end_gpu - start_gpu);
+    printf("GPU v2 time: %.10f\n", estimate_gpu.count() / 1.0);
+
+    if (thablasStatus != THABLAS_STATUS_SUCCESS) {
+      return false;
+    }
+
+    // run the function on the cpu
+    softmax(input_cpu, size);
+
+    // compare the results
+    bool is_valid = true;
+    int cnt = 0, thr = 70;
+    float eps = 1e-3;
+
+    for (int i = 0; i < size; i++) 
+    {
+      float o_gpu = input_gpu[i];
+      float o_ans = input_cpu[i];
+      if (fabsf(o_gpu - o_ans) > eps &&
+          (o_ans == 0 || fabsf((o_gpu - o_ans) / o_ans) > eps)) {
+        ++cnt;
+        if (cnt <= thr)
+          printf("O[%d] : correct_value = %f, your_value = %f\n", i, o_ans, o_gpu);
+        if (cnt == thr + 1)
+          printf("Too many error, only first %d values are printed.\n", thr);
+        is_valid = false;
+      }
+    }
+
+
+    if (is_valid) {
+      printf("Validation: VALID\n"); fflush(stdout);
+      return 1;
+    } else {
+      printf("Validation: INVALID\n"); fflush(stdout);
+      return 0;
+    }
+    
+}
+
 int main()
 {
   bool all_valid = 1;
@@ -418,6 +495,16 @@ int main()
   assert(all_valid);
   all_valid = std::min(all_valid, test_thaDNN_h2d_s_rmsnorm(256*256));
   printf("RMS Norm PASSED\n");
+
+  // test softmax v2
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax_v2(1));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax_v2(111));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax_v2(11111));
+  assert(all_valid);
+  all_valid = std::min(all_valid, test_thaDNN_h2d_s_softmax_v2(32000));
+  printf("Softmax V2 PASSED\n");
 
   // test RoPE_relative_positional_encoding
   all_valid = std::min(all_valid, test_RoPE_relative_positional_encoding(256, 16, 64, 0));
