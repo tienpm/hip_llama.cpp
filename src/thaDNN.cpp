@@ -874,6 +874,8 @@ __device__ float warp_reduce_sum(float val)
 {
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
         val += __shfl_xor(val, offset);
+        // val += __shfl_down(val, offset);
+
     return val;
 }
 
@@ -1219,6 +1221,8 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transforme
 __device__ float warp_reduce_max(float val) {
   for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
     val = max(val, __shfl_xor(val, offset));
+    // val = max(val, __shfl_down(val, offset));
+
   return val;
 }
 
