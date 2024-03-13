@@ -5,7 +5,7 @@ BUILD    := ./build
 OBJ_DIR  := $(BUILD)/objects
 APP_DIR  := $(BUILD)/apps
 TARGET   := llama
-INCLUDE  := -Iinclude/
+INCLUDE  := -Iinclude/ -I/opt/rocm/include/hipblas
 SRC      :=                      \
    $(wildcard src/*.cpp)         \
 

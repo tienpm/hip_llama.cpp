@@ -1,69 +1,46 @@
 #include "hip_helper.hpp"
+#include "thaBLAS.hpp"
+#include "models.hpp"
 
-#include <math.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <math.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+
 #include <fstream>
 #include <iostream>
 
 #include <hip/hip_runtime.h>
 
-void alloc_mat(float **m, int R, int C) {
-  // *m = (float *)aligned_alloc(32, sizeof(float) * R * C);
-  CHECK_HIP(hipHostMalloc(m, R * C * sizeof(float)));
-  if (*m == NULL) {
-    printf("Failed to allocate memory for matrix.\n");
-    exit(0);
-  }
-}
+void alloc_mat(float **m, int R, int C);
 
-void alloc_vec(float **m, int N) {
-  alloc_mat(m, N, 1);
-}
+void util_free(void *m);
 
-void rand_mat(float *m, int R, int C) {
-  for (int i = 0; i < R; i++) {
-    for (int j = 0; j < C; j++) {
-      m[i * C + j] = (float)rand() / (float)RAND_MAX - 0.5;
-    }
-  }
-}
+void alloc_vec(float **m, int N);
 
-void rand_vec(float *m, int N) {
-  rand_mat(m, N, 1);
-}
+void rand_mat(float *m, int R, int C);
 
-void zero_mat(float *m, int R, int C) { memset(m, 0, sizeof(float) * R * C); }
+void rand_vec(float *m, int N);
 
-void zero_vec(float *m, int N) { zero_mat(m, N, 1); }
+void zero_mat(float *m, int R, int C);
 
-bool compareFiles(const std::string& filePath1, const std::string& filePath2) {
-    std::ifstream file1(filePath1, std::ifstream::binary | std::ifstream::ate);
-    std::ifstream file2(filePath2, std::ifstream::binary | std::ifstream::ate);
+void zero_vec(float *m, int N);
 
-    if (!file1.is_open() || !file2.is_open()) {
-        std::cerr << "Error opening one of the files for comparison." << std::endl;
-        return false;
-    }
+bool compareFiles(const std::string& filePath1, const std::string& filePath2);
 
-    // Check file sizes first
-    if (file1.tellg() != file2.tellg()) {
-        std::cerr << "Files have different sizes." << std::endl;
-        return false;
-    }
+void malloc_run_state(RunState* s, Config* p);
 
-    // Reset file read positions
-    file1.seekg(0, std::ifstream::beg);
-    file2.seekg(0, std::ifstream::beg);
+void print_transformer(Transformer* t);
 
-    char buffer1, buffer2;
-    while (file1.get(buffer1) && file2.get(buffer2)) {
-        if (buffer1 != buffer2) {
-            return false; 
-        }
-    }
+void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights);
 
-    return true; 
-}
+void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights, int* fd, float** data, ssize_t* file_size);
+
+void build_transformer(Transformer *t, char* checkpoint_path);
+
+void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d);

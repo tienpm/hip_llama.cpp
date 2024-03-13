@@ -1,5 +1,7 @@
 #pragma once
 
+#include <hip/hip_runtime.h>
+
 typedef enum
 {
     THABLAS_STATUS_SUCCESS           = 0, /**< Function succeeds */
@@ -19,6 +21,7 @@ typedef enum
 typedef struct 
 {
     int current_gpu_id;
+    hipStream_t stream_;
 } thablasHandle_t;
 
 thablasStatus_t thablasCreate(thablasHandle_t* handle);
@@ -118,3 +121,13 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
 
     ********************************************************************/
 thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
+
+thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int M);
+
+thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size);
+
+thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
+
+thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
+
+thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
