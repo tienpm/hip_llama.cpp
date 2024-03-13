@@ -138,7 +138,7 @@ __global__ void gemm_wmma_d(uint32_t         m,     // matrix free dim m
     // @tp5: data layout = row_major, col_major or void (default)
     auto fragA = rocwmma::fragment<rocwmma::matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float16_t, rocwmma::row_major>();
     auto fragB = rocwmma::fragment<rocwmma::matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float16_t, rocwmma::col_major>();
-    // auto fragC   = rocwmma::fragment<rocwmma::accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t>();
+    auto fragC   = rocwmma::fragment<rocwmma::accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t>();
     auto fragAcc = rocwmma::fragment<rocwmma::accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t>();
 
     // Initialize accumulator fragment
@@ -166,17 +166,17 @@ __global__ void gemm_wmma_d(uint32_t         m,     // matrix free dim m
              rocwmma::mma_sync(fragAcc, fragA, fragB, fragAcc);
          }
 
-        //  // Fetch C matrix
-        //  rocwmma::load_matrix_sync(fragC, c + (cRow * ldc + cCol), ldc, rocwmma::mem_row_major);
+         // Fetch C matrix
+         rocwmma::load_matrix_sync(fragC, c + (cRow * ldc + cCol), ldc, rocwmma::mem_row_major);
 
-        //  // D = alpha * A x B + beta * C
-        //  for(int i = 0; i < fragC.num_elements; ++i)
-        //  {
-        //      fragC.x[i] = alpha * fragAcc.x[i] + beta * fragC.x[i];
-        //  }
+         // D = alpha * A x B + beta * C
+         for(int i = 0; i < fragC.num_elements; ++i)
+         {
+             fragC.x[i] = alpha * fragAcc.x[i] + beta * fragC.x[i];
+         }
 
          // Store to D
-         rocwmma::store_matrix_sync(d + (cRow * ldd + cCol), fragAcc, ldd, rocwmma::mem_row_major);
+         rocwmma::store_matrix_sync(d + (cRow * ldd + cCol), fragC, ldd, rocwmma::mem_row_major);
      }
 }
 

@@ -212,6 +212,8 @@ void hip_sgemm_wt(int M, int N, int K, float alpha, float *A, float *B, float be
   return;
 
 }
+
+
 void matmul(float* hA, float* hB, float* hC, int M, int N, int K)
          {
     for (int i = 0; i < M; i++) {
