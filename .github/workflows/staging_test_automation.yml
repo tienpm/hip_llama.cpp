@@ -1,0 +1,15 @@
+name: Automation Test on Pull Request on Staging
+on:
+  pull_request:
+    branches: [staging]
+jobs:
+  run_tests:
+    runs-on: ubuntu-latest # Or another suitable OS
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup SSH Key
+        run: "mkdir -p ~/.ssh\n
+              echo \"${{ secrets.GETP16_MOREH_SSH_PRIVATE_KEY }}\" > ~/.ssh/id_rsa \n
+              chmod 600 ~/.ssh/id_rsa \n"
+      - name: Run tests on private server
+        run: "ssh -o StrictHostKeyChecking=no -p 22555 getp16@147.47.200.81 ll -a \n"

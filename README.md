@@ -16,10 +16,15 @@ make
 ## Usage
 
 - Instructions on how to use the project.
+
+```bash
+./build/apps/llama model.bin -m test -f <input_filename> -o <output_filename>
+```
+
 - Examples of how to inference llama2.
 
-```
-runcc model.bin -m test -f <input_filename> -o <output_filename>
+```bash
+./build/apps/llama /shared/erc/getpTA/main/modelbin/stories110M.bin -m test -f assets/in/gen_in_128.txt -o assets/out/gen_out_128.txt
 ```
 
 ## Documentation
@@ -28,7 +33,7 @@ runcc model.bin -m test -f <input_filename> -o <output_filename>
 
 ## Contributing
 
-- The project will open for contributer soon. If you have some issues or feature requests, please open an issue tickets.
+- The project is private. We will open source it in the future, if allowed. If you have some issues or feature requests, please let us know by email of contributors bellow.
 
 ## License
 
