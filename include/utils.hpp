@@ -33,6 +33,12 @@ void zero_vec(float *m, int N);
 
 bool compareFiles(const std::string& filePath1, const std::string& filePath2);
 
+/*
+ * ===========================================================================
+ *    Initial Transformer 
+ * ===========================================================================
+ */
+
 void malloc_run_state(RunState* s, Config* p);
 
 void print_transformer(Transformer* t);
