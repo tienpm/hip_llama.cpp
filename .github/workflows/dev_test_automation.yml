@@ -12,4 +12,4 @@ jobs:
               echo \"${{ secrets.GETP16_MOREH_SSH_PRIVATE_KEY }}\" > ~/.ssh/id_rsa \n
               chmod 600 ~/.ssh/id_rsa \n"
       - name: Run tests on private server
-        run: "ssh -o StrictHostKeyChecking=no getp16@147.47.200.81 ll -a \n"
+        run: "ssh -o StrictHostKeyChecking=no -p 22555 getp16@147.47.200.81 ll -a \n"
