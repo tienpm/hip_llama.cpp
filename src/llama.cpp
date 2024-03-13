@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <omp.h>         // OpenMP
 
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,8 @@
 #include "seq.hpp"
 #include "thaDNN.hpp"
 #include "thaBLAS.hpp"
+
+#define MODE 0
 
 void free_run_state(RunState* s) {
   free(s->x);

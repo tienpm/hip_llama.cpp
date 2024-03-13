@@ -30,7 +30,7 @@ thablasStatus_t thablasDestroy(thablasHandle_t handle);
 
 /*
  * ===========================================================================
- *    level 1 BLAS
+ *    level 1 BLAS: Vector - Vector operations 
  * ===========================================================================
  */
 
@@ -57,15 +57,25 @@ thablasStatus_t thablas_Svds(thablasHandle_t handle, int n, float* A, float* B, 
 
 thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_num_gpus);
 
-/*
- * ===========================================================================
- *    level 2 BLAS
- * ===========================================================================
- */
+thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size);
+
+thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
 
 /*
  * ===========================================================================
- *    level 3 BLAS
+ *    level 2 BLAS: Matrix - Vector operations
+ * ===========================================================================
+ */
+
+thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int M);
+
+thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
+
+thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
+
+/*
+ * ===========================================================================
+ *    level 3 BLAS: Matrix - Matrix operations
  * ===========================================================================
  */
 
@@ -122,12 +132,3 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
     ********************************************************************/
 thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
 
-thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int M);
-
-thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size);
-
-thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
-
-thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
-
-thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
