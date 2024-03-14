@@ -705,166 +705,138 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
   }
 
-  n_batches = 4;
+  int num_devices;
+  CHECK_HIP(hipGetDeviceCount(&num_devices));
+  if (!num_devices)
+  {
+      printf("THABLAS SOFTMAX V2 ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+      return THABLAS_STATUS_ALLOC_FAILED;
+  }
+
+  n_batches = 1;
+  int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
-  thablasHandle_t handle1, handle2, handle3;
-  thablasCreate(&handle1);
-  thablasCreate(&handle2);
-  thablasCreate(&handle3);
-  TransformerWeights *weight_d;
-  copy_weight_to_device(transformer, weight_d);
-  RunState *state_d_batch;
+  TransformerWeights *weight_d[num_devices];
+  RunState *state_d_batch[num_devices];
+  float *logits[n_batches];
+
+  thablasHandle_t handle[n_batches];
+  for(int g=0 ; g<num_devices ; ++g)
+  {
+    CHECK_HIP(hipSetDevice(g));
+    thablasCreate(&handle[g]);
+    copy_weight_to_device(handle[g], transformer, weight_d[g]);
+    for(int b=0 ; b<n_batches ; ++b)
+    {
+      alloc_state_to_device_batch(transformer, state_d_batch[g], n_batches);
+    }
+  }
+
   float *logits[n_batches];
   for(int b=0 ; b<n_batches ; ++b)
   {
-    alloc_state_to_device_batch(transformer, state_d_batch, n_batches);
     CHECK_HIP(hipHostMalloc(&logits[b], vocab_size * sizeof(float)));
   }
 
-  // Loop for the multiple requests
-  for(int idx = 0; idx < requests->num_reqs; idx+=n_batches) {
-    std::string gen_str[n_batches];
-    char *prompt[n_batches];
-    int *prompt_tokens[n_batches];
-    int num_prompt_tokens[n_batches];
+  int indices[n_batches];
+  for(int b=0 ; b<n_batches ; ++b)
+    indices[b] = -1;
+  int next_idx = 0;
+  int n_done = 0;
 
-    long start = 0; // used to time our code, only initialized after first iteration
-    int next[n_batches]; // will store the next token in the sequence
-    int token[n_batches]; // kick off with the first token in the prompt
-    int pos[n_batches]; // position in the sequence
-    int steps[n_batches]; // max sequence length
-    bool is_done[n_batches];
-    float* logits_d[n_batches];
+  std::string gen_str[n_batches];
+  char *prompt[n_batches];
+  int *prompt_tokens[n_batches];
+  int num_prompt_tokens[n_batches];
 
+  long start = 0; // used to time our code, only initialized after first iteration
+  int next[n_batches]; // will store the next token in the sequence
+  int token[n_batches]; // kick off with the first token in the prompt
+  int pos[n_batches]; // position in the sequence
+  int steps[n_batches]; // max sequence length
+  bool is_done[n_batches];
+  float* logits_d[n_batches];
+
+  thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
+  int total_tokens = 0;
+
+  while (n_done < requests->num_reqs) {
+
+    // assgin new request to GPU
+    for(int b=0 ; b<n_batches ; ++b) {
+      // if there exist next request
+      if (next_idx < requests->num_reqs) {
+        if (indices[b] == -1) {
+          indices[b] = next_idx;
+          ++next_idx;
+          gen_str[b] = "";
+          prompt[b] = get_str_req_ptr(requests, indices[b]);
+          prompt_tokens[b] = (int*)malloc((strlen(prompt[b])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+
+          // encode the (string) prompt into tokens sequence
+          num_prompt_tokens[b] = 0;
+          encode(tokenizer, prompt[b], 1, 0, prompt_tokens[b], &num_prompt_tokens[b]);
+          if (num_prompt_tokens[b] < 1) {
+            fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+            exit(EXIT_FAILURE);
+          }
+
+          token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
+          pos[b] = 0; // position in the sequence
+          steps[b] = requests->max_seq_len; // max sequence length
+          is_done[b] = false;
+          logits_d[b] = nullptr;
+        }
+      }
+    }
+
+    tha_status = thaDNN_s_forward_batch(handle1, handle2, handle3, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_d);
+    for(int b=0 ; b<n_batches ; ++b)
+      CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+    CHECK_HIP(hipDeviceSynchronize());
+
+    // advance the state machine
+    for(int b=0 ; b<n_batches ; ++b)
+    if (indices[b] > -1) 
+    {
+      if (pos[b] < num_prompt_tokens[b] - 1) {
+        next[b] = prompt_tokens[b][pos[b] + 1];
+      } else {
+        next[b] = sample(&samplers[indices[b]], logits[b]);
+      }
+
+      if (next[b] == 1) {
+        is_done[b] = true;
+      }
+      else
+      {
+        char* piece = decode(tokenizer, token[b], next[b]);
+        append_str(piece, gen_str[b]);
+        token[b] = next[b];
+
+        ++pos[b]; // TODO: update `++pos` positon
+        if (pos[b] >= steps[b]) {
+          is_done[b] = true;
+        }
+      }
+    }
+    
+    // de-assgin the requests
     for(int b=0 ; b<n_batches ; ++b)
     {
-      gen_str[b] = "";
-      prompt[b] = get_str_req_ptr(requests, idx+b);
-      prompt_tokens[b] = (int*)malloc((strlen(prompt[b])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-
-      // encode the (string) prompt into tokens sequence
-      num_prompt_tokens[b] = 0;
-      encode(tokenizer, prompt[b], 1, 0, prompt_tokens[b], &num_prompt_tokens[b]);
-
-      if (num_prompt_tokens[b] < 1) {
-        fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
-        exit(EXIT_FAILURE);
-      }
-
-      token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
-      pos[b] = 0; // position in the sequence
-      steps[b] = requests->max_seq_len; // max sequence length
-      is_done[b] = false;
-      logits_d[b] = nullptr;
-    }
-
-    thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
-    int finish_counter = 0;
-    // start the main loop
-    while(finish_counter < n_batches)
-    {
-      tha_status = thaDNN_s_forward_batch(handle1, handle2, handle3, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_d);
-      for(int b=0 ; b<n_batches ; ++b)
-        CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
-      CHECK_HIP(hipDeviceSynchronize());
-
-      // advance the state machine
-      for(int b=0 ; b<n_batches ; ++b) 
+      if (is_done[b] && indices[b] > -1)
       {
-        if (pos[b] < num_prompt_tokens[b] - 1) {
-          next[b] = prompt_tokens[b][pos[b] + 1];
-        } else {
-          next[b] = sample(&samplers[idx+b], logits[b]);
-        }
-
-        if (next[b] == 1 || is_done[b])
-          is_done[b] = true;
-        else
-        {
-          ++pos[b]; // TODO: update `++pos` positon
-          char* piece = decode(tokenizer, token[b], next[b]);
-          append_str(piece, gen_str[b]);
-          token[b] = next[b];
-        }
+        gen_cnt += pos[b];
+        gen_str[b] += "\n";
+        strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
+        free(prompt_tokens[b]);        
+        indices[b] = -1;
+        is_done[b] = false;
+        ++n_done;
       }
-
-      for(int b=0 ; b<n_batches ; ++b) 
-      {
-        if (pos[b] >= steps[b]) 
-          is_done[b] = true;
-      }
-
-      finish_counter = 0;
-      for(int b=0 ; b<n_batches ; ++b) 
-      {
-        finish_counter += is_done[b];
-      }
-      
-      if (start == 0) { start = time_in_ms(); }
     }
 
-    
-    // while (pos < steps) {
-    //   // forward the transformer to get logits for the next token
-    //   float* logits_d = nullptr;
-    //   tha_status = thaDNN_s_forward(handle1, handle2, handle3, transformer_d, token, pos, logits_d);
-    //   CHECK_HIP(hipMemcpy(logits, logits_d, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
-    //   CHECK_HIP(hipDeviceSynchronize());
-
-    //   // advance the state machine
-    //   if (pos < num_prompt_tokens - 1) {
-    //     // if we are still processing the input prompt, force the next prompt token
-    //     next = prompt_tokens[pos + 1];
-    //   } else {
-    //     // otherwise sample the next token from the logits
-    //     next = sample(&samplers[idx], logits);
-    //     //next = sample_greedy(sampler, logits);
-    //     //next = sample_determin(sampler, logits, rng_states, idx);
-    //   }
-    //   pos++;
-
-    //   // data-dependent terminating condition: the BOS (=1) token delimits sequences
-    //   if (next == 1) { 
-    //     break;
-    //   }
-
-    //   // print the token as string, decode it with the Tokenizer object
-    //   char* piece = decode(tokenizer, token, next);
-
-    //   // You don't need to print every tokens are generated.
-    //   // {
-    //   safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-    //   fflush(stdout);
-    //   // }
-
-    //   // gen_str += piece;
-
-    //   append_str(piece, gen_str);
-
-    //   token = next;
-
-    //   // init the timer here because the first iteration can be slower
-    //   // this timer is not important
-    //   if (start == 0) { start = time_in_ms(); }
-
-    // }
-    // printf("\n");
-
-    int total_pos = 0;
-    for(int b=0 ; b<n_batches ; ++b) 
-    {
-      total_pos += pos[b];
-      gen_str[b] += "\n";
-      strcpy(get_str_gen_ptr(requests, idx + b), gen_str[b].c_str());
-      free(prompt_tokens[b]);
-    }
-
-    // report achieved tok/s (pos-1 because the timer starts after first iteration)
-    if (total_pos > 1) {
-      long end = time_in_ms();
-      fprintf(stderr, "\nachieved tok/s: %f\n\n", (total_pos - 1) / (double)(end-start)*1000);
-      gen_cnt += (total_pos - 1);
-    }
+    if (start == 0) { start = time_in_ms();}
   }
 
   for(int idx = 0; idx < requests->num_reqs; idx++) {
@@ -872,8 +844,6 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
   }
   return gen_cnt;
 }
-
-
 
 
 // ----------------------------------------------------------------------------
