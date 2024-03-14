@@ -1647,70 +1647,104 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle
 return thablas_status;
 
 thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* output_logits[]) {
-    float *x[n_batches];
-    int dim = p->dim;
-    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 
-    int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
-    int hidden_dim =  p->hidden_dim;
-    int head_size = dim / p->n_heads;
-    for(int b=0 ; b<n_batches ; ++b)
-        x[b] = s_batch->x + b * dim;
+    // float *x[n_batches];
+    // int dim = p->dim;
+    // int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 
+    // int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    // int hidden_dim =  p->hidden_dim;
+    // int head_size = dim / p->n_heads;
+    // for(int b=0 ; b<n_batches ; ++b)
+    //     x[b] = s_batch->x + b * dim;
 
-    int *pos_d;
-    CHECK_HIP(hipMalloc(&pos_d, n_batches * sizeof(int)));
-    CHECK_HIP(hipMemcpy(pos_d, pos, n_batches * sizeof(int), hipMemcpyHostToDevice));
+    // int *pos_d;
+    // CHECK_HIP(hipMalloc(&pos_d, n_batches * sizeof(int)));
+    // CHECK_HIP(hipMemcpy(pos_d, pos, n_batches * sizeof(int), hipMemcpyHostToDevice));
+
+    // thablasStatus_t thablas_status = THABLAS_STATUS_SUCCESS;
+
+    // // copy the token embedding into x
+    // float* content_row[n_batches];
+    // for(int b=0 ; b<n_batches ; ++b)
+    // {
+    //     content_row[b] = w->token_embedding_table + token[b] * dim;
+    //     memcpy(x[b], content_row[b], dim*sizeof(float)); // TODO: copy device to device
+    // }
+
+    // // forward all the layers
+    // for(unsigned long long l = 0; l < p->n_layers; l++) {
+    //     thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->xb, s_batch->x, w->rms_att_weight + l*dim, dim, dim);
+
+    //     int loff = l * p->seq_len * kv_dim;
+
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->q, s_batch->xb, w->wq + l*dim*dim, dim, dim, 0, 0, pos_d, dim, dim);
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->key_cache, s_batch->xb, w->wk + l*dim*kv_dim, dim, kv_dim, loff, kv_dim, pos_d, p->n_layers * p->seq_len * kv_dim, dim);
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->value_cache, s_batch->xb, w->wv + l*dim*kv_dim, dim, kv_dim, loff, kv_dim, pos_d, p->n_layers * p->seq_len * kv_dim, dim);
+
+    //     for(int b=0 ; b<n_batches ; ++b)
+    //         thablas_status = thaDNN_s_rope(handle1, dim, head_size, kv_dim, pos[b], s_batch->q + b * dim, s_batch->key_cache + loff + pos[b] * kv_dim + b * p->n_layers * p->seq_len * kv_dim);
+
+    //     // multi-head attention
+    //     thablas_status = thaDNN_s_multiheads_1_v2_batch(handle1, n_batches, pos, pos_d, p->n_heads, p->n_layers, s_batch->q, s_batch->att, s_batch->key_cache, head_size, p->seq_len, loff, kv_dim, dim, kv_mul);
+    //     thablas_status = thaDNN_s_multiheads_2_batch(handle1, n_batches, s_batch->att, pos_d, p->seq_len, p->n_heads);
+    //     thablas_status = thaDNN_s_multiheads_3_v2_batch(handle1, n_batches, pos_d, p->n_heads, s_batch->xb, s_batch->att, s_batch->value_cache, head_size, p->seq_len, loff, kv_dim, kv_mul, dim, p->n_layers);
+
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->xb2, s_batch->xb, w->wo + l*dim*dim, dim, dim, 0, 0, pos_d, dim, dim);
+
+    //     for(int b=0 ; b<n_batches ; ++b)
+    //         thablas_status = thaBLAS_s_vecaddvec(handle1, x[b], s_batch->xb2 + b * dim, dim);
+
+    //     thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->xb, s_batch->x, w->rms_ffn_weight + l*dim, dim, dim);
+
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->hb, s_batch->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim, 0, 0, pos_d, hidden_dim, dim);
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->hb2, s_batch->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim, 0, 0, pos_d, hidden_dim, dim);
+
+    //     for(int b=0 ; b<n_batches ; ++b)
+    //         thablas_status = thaDNN_s_swiglu(handle1, s_batch->hb + b * hidden_dim, s_batch->hb2 + b * hidden_dim, hidden_dim);
+
+    //     thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->xb, s_batch->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim, 0, 0, pos_d, dim, hidden_dim);
+
+    //     for(int b=0 ; b<n_batches ; ++b)
+    //         thablas_status = thaBLAS_s_vecaddvec(handle1, x[b], s_batch->xb + b * dim, dim);
+    // }
+
+    // thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->x, s_batch->x, w->rms_final_weight, dim, dim);
+    // thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->logits, s_batch->x, w->wcls, dim, p->vocab_size, 0, 0, pos_d, p->vocab_size, dim);
+    // for(int b=0 ; b<n_batches ; ++b)    
+    //     output_logits[b] = s_batch->logits + b * p->vocab_size;
+        
+    // return thablas_status;
+
+
+    /*
+    * Run half of the layers on GPU 0 and the other half on GPU 1
+    */
+
+    CHECK_HIP(hipSetDevice(0));
+    thablasHandle_t handle_half0;
+    handle_half0.current_gpu_id = 0;
 
     thablasStatus_t thablas_status = THABLAS_STATUS_SUCCESS;
+    int dim_0 = p->dim;
+    int kv_dim_0 = (p->dim * p->n_kv_heads) / p->n_heads;
+    int kv_mul_0 = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    int hidden_dim_0 =  p->hidden_dim;
+    int head_size_0 = dim_0 / p->n_heads;
 
-    // copy the token embedding into x
-    float* content_row[n_batches];
-    for(int b=0 ; b<n_batches ; ++b)
+    // forward half of the layers
+    for (unsigned long long l =0; l < p-> n_layers; l++)
     {
-        content_row[b] = w->token_embedding_table + token[b] * dim;
-        memcpy(x[b], content_row[b], dim*sizeof(float)); // TODO: copy device to device
-    }
+        thablas_status = thaDNN_s_rmsnorm_v2_batch(handle_half0, n_batches, s_batch->xb, s_batch->x, w->rms_att_weight + l*dim_0, dim_0, dim_0);
 
-    // forward all the layers
-    for(unsigned long long l = 0; l < p->n_layers; l++) {
-        thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->xb, s_batch->x, w->rms_att_weight + l*dim, dim, dim);
+        int loff = l * p->seq_len * kv_dim_0;
 
-        int loff = l * p->seq_len * kv_dim;
-
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->q, s_batch->xb, w->wq + l*dim*dim, dim, dim, 0, 0, pos_d, dim, dim);
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->key_cache, s_batch->xb, w->wk + l*dim*kv_dim, dim, kv_dim, loff, kv_dim, pos_d, p->n_layers * p->seq_len * kv_dim, dim);
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->value_cache, s_batch->xb, w->wv + l*dim*kv_dim, dim, kv_dim, loff, kv_dim, pos_d, p->n_layers * p->seq_len * kv_dim, dim);
+        thablas_status = thaDNN_s_matmulvec_v2_batch(handle_half0, n_batches, s_batch->q, s_batch->xb, w->wq + l*dim_0*dim_0, dim_0, dim_0, 0, 0, pos, dim_0, dim_0);
+        thablas_status = thaDNN_s_matmulvec_v2_batch(handle_half0, n_batches, s_batch->key_cache, s_batch->xb, w->wk + l*dim_0*kv_dim_0, dim_0, kv_dim_0, loff, kv_dim_0, pos, p->n_layers * p->seq_len * kv_dim_0, dim_0);
+        thablas_status = thaDNN_s_matmulvec_v2_batch(handle_half0, n_batches, s_batch->value_cache, s_batch->xb, w->wv + l*dim_0*kv_dim_0, dim_0, kv_dim_0, loff, kv_dim_0, pos, p->n_layers * p->seq_len * kv_dim_0, dim_0);
 
         for(int b=0 ; b<n_batches ; ++b)
-            thablas_status = thaDNN_s_rope(handle1, dim, head_size, kv_dim, pos[b], s_batch->q + b * dim, s_batch->key_cache + loff + pos[b] * kv_dim + b * p->n_layers * p->seq_len * kv_dim);
+            thablas_status = thaDNN_s_rope(handle_half0, dim_0, head_size_0, kv_dim_0, pos[b], s_batch->q + b * dim_0, s_batch->key_cache + loff + pos[b] * kv_dim_0 + b * p->n_layers * p->seq_len * kv_dim_0);
 
         // multi-head attention
-        thablas_status = thaDNN_s_multiheads_1_v2_batch(handle1, n_batches, pos, pos_d, p->n_heads, p->n_layers, s_batch->q, s_batch->att, s_batch->key_cache, head_size, p->seq_len, loff, kv_dim, dim, kv_mul);
-        thablas_status = thaDNN_s_multiheads_2_batch(handle1, n_batches, s_batch->att, pos_d, p->seq_len, p->n_heads);
-        thablas_status = thaDNN_s_multiheads_3_v2_batch(handle1, n_batches, pos_d, p->n_heads, s_batch->xb, s_batch->att, s_batch->value_cache, head_size, p->seq_len, loff, kv_dim, kv_mul, dim, p->n_layers);
+        thablas_status = thaDNN_s_multiheads_1_v2_batch(handle_half0, n_batches, pos, p->n_heads, p->n_layers, s_batch->q, s_batch->att, s_batch->key_cache, head_size_0, p->seq_len,
 
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->xb2, s_batch->xb, w->wo + l*dim*dim, dim, dim, 0, 0, pos_d, dim, dim);
-
-        for(int b=0 ; b<n_batches ; ++b)
-            thablas_status = thaBLAS_s_vecaddvec(handle1, x[b], s_batch->xb2 + b * dim, dim);
-
-        thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->xb, s_batch->x, w->rms_ffn_weight + l*dim, dim, dim);
-
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->hb, s_batch->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim, 0, 0, pos_d, hidden_dim, dim);
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->hb2, s_batch->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim, 0, 0, pos_d, hidden_dim, dim);
-
-        for(int b=0 ; b<n_batches ; ++b)
-            thablas_status = thaDNN_s_swiglu(handle1, s_batch->hb + b * hidden_dim, s_batch->hb2 + b * hidden_dim, hidden_dim);
-
-        thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->xb, s_batch->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim, 0, 0, pos_d, dim, hidden_dim);
-
-        for(int b=0 ; b<n_batches ; ++b)
-            thablas_status = thaBLAS_s_vecaddvec(handle1, x[b], s_batch->xb + b * dim, dim);
-    }
-
-    thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->x, s_batch->x, w->rms_final_weight, dim, dim);
-    thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->logits, s_batch->x, w->wcls, dim, p->vocab_size, 0, 0, pos_d, p->vocab_size, dim);
-    for(int b=0 ; b<n_batches ; ++b)    
-        output_logits[b] = s_batch->logits + b * p->vocab_size;
-        
-    return thablas_status;
 }
