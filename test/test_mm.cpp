@@ -193,14 +193,14 @@ __global__ void __launch_bounds__(NUM_THREADS)
 }
 
 void hip_sgemm_wt(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
-  constexpr int BM = 64;
-  constexpr int BN = 64;
-  constexpr int BK = 64;
-  constexpr int WM = 64;
-  constexpr int WN = 64;
+  constexpr int BM = 8;
+  constexpr int BN = 8;
+  constexpr int BK = 8;
+  constexpr int WM = 8;
+  constexpr int WN = 8;
   constexpr int WNITER = 2;
-  constexpr int TM = 4;
-  constexpr int TN = 4;
+  constexpr int TM = 2;
+  constexpr int TN = 2;
   constexpr int NUM_THREADS = 256;
 // template <const int BM, const int BN, const int BK, const int WM, const int WN,
 //           const int WNITER, const int TM, const int TN, const int NUM_THREADS>
@@ -228,9 +228,9 @@ void matmul(float* hA, float* hB, float* hC, int M, int N, int K)
 }
 
 int main() {
-  int M = 64;
-  int N = 64;
-  int K = 64;
+  int M = 16;
+  int N = 16;
+  int K = 16;
   float alpha = 1.0;
   float beta = 0.0;
   float *A, *B, *C;
@@ -274,7 +274,6 @@ int main() {
       }
     }
   }
-  printf("PASSED\n");
 
   free(hA);
   free(hB);

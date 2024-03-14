@@ -1,4 +1,4 @@
-#include <hip/hip_ext.h>
+// #include <hip/hip_ext.h>
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
@@ -9,6 +9,7 @@
 
 using rocwmma::float16_t;
 using rocwmma::float32_t;
+
 // define CHECK_HIP_ERROR
 #define CHECK_HIP_ERROR(cmd)                                                                        \
     do                                                                                              \
@@ -38,7 +39,7 @@ void matmul(float* hA, float* hB, float* hC, int M, int N, int K)
 
 // Matrix data initialization
 template <typename DataT>
-__host__ static inline void fill(DataT* mat, uint32_t m, uint32_t n)
+__host__ static inline void fill(DataT* mat, int m, int n)
 {
     auto ld = n;
     for(int i = 0; i < m; ++i)
@@ -52,14 +53,14 @@ __host__ static inline void fill(DataT* mat, uint32_t m, uint32_t n)
             // ic_cast<DataT>(value) : static_cast<DataT>(value);
 
             // random value from 0 to 1
-            mat[i * ld + j] = static_cast<DataT>(rand()) / static_cast<DataT>(RAND_MAX);
+            mat[i * ld + j] = 0.001*( (i + ld ) % 3 );
         }
     }
 }
 
 // Matrix data initialization
 template <typename DataT>
-__host__ static inline void fill_C(DataT* mat, uint32_t m, uint32_t n)
+__host__ static inline void fill_C(DataT* mat, int m, int n)
 {
     auto ld = n;
     for(int i = 0; i < m; ++i)
@@ -70,11 +71,10 @@ __host__ static inline void fill_C(DataT* mat, uint32_t m, uint32_t n)
              // Alternate sign every 3 elements
             //  auto value      = (i * n + j) % 13;
             //  mat[i * ld + j] = (value % 3) ? -static_cast<DataT>(value) : static_cast<DataT>(value);
-            mat[i * ld + j] = 10;
+            mat[i * ld + j] = 100;
         }
     }
 }
-
 
 // Supports BlockM/N square sizes of
 // : 16 x 16
@@ -115,19 +115,19 @@ const int T_BLOCK_Y = 4;
 //
 // Launchable device kernel function:
 //
-__global__ void gemm_wmma_d(uint32_t         m,     // matrix free dim m
-                            uint32_t         n,     // matrix free dim n
-                            uint32_t         k,     // matrix fixed dim k
-                            float16_t const* a,     // device data ptr for matrix A
-                            float16_t const* b,     // device data ptr for matrix B
-                            float32_t const* c,     // device data ptr for matrix C
-                            float32_t*       d,     // device data ptr for matrix D
-                            uint32_t         lda,   // leading dimension for matrix A
-                            uint32_t         ldb,   // leading dimension for matrix B
-                            uint32_t         ldc,   // leading dimension for matrix C
-                            uint32_t         ldd,   // leading dimension for matrix D
-                            float32_t        alpha, // uniform scalar
-                            float32_t        beta)  // uniform scalar
+__global__ void gemm_wmma_d(int         m,     // matrix free dim m
+                            int         n,     // matrix free dim n
+                            int         k,     // matrix fixed dim k
+                            float * a,     // device data ptr for matrix A
+                            float * b,     // device data ptr for matrix B
+                            float * c,     // device data ptr for matrix C
+                            float *       d,     // device data ptr for matrix D
+                            int         lda,   // leading dimension for matrix A
+                            int         ldb,   // leading dimension for matrix B
+                            int         ldc,   // leading dimension for matrix C
+                            int         ldd,   // leading dimension for matrix D
+                            float        alpha, // uniform scalar
+                            float        beta)  // uniform scalar
 {
     // Create frags with meta-data context for block-wise GEMM decomposition
     // @tp0: fragment context = matrix_a, matrix_b or accumulator
@@ -136,9 +136,19 @@ __global__ void gemm_wmma_d(uint32_t         m,     // matrix free dim m
     // @tp3: block size K
     // @tp4: fragment data type
     // @tp5: data layout = row_major, col_major or void (default)
+
+    // ép kiểu dữ liệu cho các fragment, ép kiểu a, b về float16_t, ép kiểu c, d về float32_t
+    float16_t * a_fp16 = (float16_t*)a;
+    float16_t * b_fp16 = (float16_t*)b;
+    float * c_fp32 = (float*)c;
+    float * d_fp32 = (float*)d;
+    // float32_t * c_fp32 = (float32_t*)c;
+    // float32_t * d_fp32 = (float32_t*)d;
+    // Create fragments
+    
     auto fragA = rocwmma::fragment<rocwmma::matrix_a, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float16_t, rocwmma::row_major>();
     auto fragB = rocwmma::fragment<rocwmma::matrix_b, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float16_t, rocwmma::col_major>();
-    // auto fragC   = rocwmma::fragment<rocwmma::accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t>();
+    auto fragC   = rocwmma::fragment<rocwmma::accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t>();
     auto fragAcc = rocwmma::fragment<rocwmma::accumulator, ROCWMMA_M, ROCWMMA_N, ROCWMMA_K, float32_t>();
 
     // Initialize accumulator fragment
@@ -159,167 +169,116 @@ __global__ void gemm_wmma_d(uint32_t         m,     // matrix free dim m
          for(int i = 0; i < k; i += ROCWMMA_K)
          {
              // Load the inputs
-             rocwmma::load_matrix_sync(fragA, a + (cRow * lda + i), lda);
-             rocwmma::load_matrix_sync(fragB, b + (i + cCol * ldb), ldb);
+             rocwmma::load_matrix_sync(fragA, a_fp16 + (cRow * lda + i), lda);
+             rocwmma::load_matrix_sync(fragB, b_fp16 + (i + cCol * ldb), ldb);
 
              // Matrix multiply - accumulate using MFMA units
              rocwmma::mma_sync(fragAcc, fragA, fragB, fragAcc);
          }
 
-        //  // Fetch C matrix
-        //  rocwmma::load_matrix_sync(fragC, c + (cRow * ldc + cCol), ldc, rocwmma::mem_row_major);
+         // Fetch C matrix
+         rocwmma::load_matrix_sync(fragC, c_fp32 + (cRow * ldc + cCol), ldc, rocwmma::mem_row_major);
 
-        //  // D = alpha * A x B + beta * C
-        //  for(int i = 0; i < fragC.num_elements; ++i)
-        //  {
-        //      fragC.x[i] = alpha * fragAcc.x[i] + beta * fragC.x[i];
-        //  }
+         // D = alpha * A x B + beta * C
+         for(int i = 0; i < fragC.num_elements; ++i)
+         {
+             fragC.x[i] = alpha * fragAcc.x[i] + beta * fragC.x[i];
+         }
 
          // Store to D
-         rocwmma::store_matrix_sync(d + (cRow * ldd + cCol), fragAcc, ldd, rocwmma::mem_row_major);
-     }
+         rocwmma::store_matrix_sync(d_fp32 + (cRow * ldd + cCol), fragC, ldd, rocwmma::mem_row_major);
+
+         // Synchronize to make sure the result is visible
+            __syncthreads();
+    }
+
+     // ép kiểu d về float 
+    d = static_cast<float *>(d_fp32);
 }
 
 // Host side supporting device mgmt and launch code
-__host__ void gemm_test(uint32_t m, uint32_t n, uint32_t k, float32_t alpha, float32_t beta)
+__host__ void gemm_test(int m, int n, int k, float alpha, float beta)
 {
-    // Problem size check
+        // Problem size check
     if((m < (ROCWMMA_M * T_BLOCK_X / WAVE_SIZE) || n < (ROCWMMA_N * T_BLOCK_Y) || k < ROCWMMA_K)
         || (m % ROCWMMA_M || n % ROCWMMA_N || k % ROCWMMA_K))
-     {
-         std::cout << "Unsupported size!\n";
-         return;
-     }
+        {
+            std::cout << "Unsupported size!\n";
+            return;
+        }
 
-     int lda = k;
-     int ldb = k;
-     int ldc = n;
-     int ldd = ldc;
+    int lda = k;
+    int ldb = k;
+    int ldc = n;
+    int ldd = ldc;
 
-     std::cout << "Initializing host data..." << std::endl;
+    float *hA, *hB, *hC, *hD;
+    float *d_a, *d_b, *d_c, *d_d;
 
-     // Initialize input matrices
-     std::vector<float16_t> matrixA(m * k);
-     std::vector<float16_t> matrixB(k * n);
-     std::vector<float32_t> matrixC(m * n);
-     // Fill outputs with NaN to catch contamination
-     std::vector<float32_t> matrixD(m * n, std::numeric_limits<float32_t>::signaling_NaN());
+    // Allocate host memory
+    hA = (float*)malloc(m * k * sizeof(float));
+    hB = (float*)malloc(k * n * sizeof(float));
+    hC = (float*)malloc(m * n * sizeof(float));
+    hD = (float*)malloc(m * n * sizeof(float));
 
-     fill(matrixA.data(), m, k);
-     fill(matrixB.data(), k, n);
-     fill(matrixC.data(), m, n);
+    // Allocate device memory
+    CHECK_HIP_ERROR(hipMalloc(&d_a, m * k * sizeof(float)));
+    CHECK_HIP_ERROR(hipMalloc(&d_b, k * n * sizeof(float)));
+    CHECK_HIP_ERROR(hipMalloc(&d_c, m * n * sizeof(float)));
+    CHECK_HIP_ERROR(hipMalloc(&d_d, m * n * sizeof(float)));
 
-     std::cout << "Initializing device data..." << std::endl;
+    // Initialize host data
+    fill<float>(hA, m, k);
+    fill<float>(hB, k, n);
+    fill_C<float>(hC, m, n);
 
-     // Allocate and copy device memory
-     float16_t* d_a;
-     float16_t* d_b;
-     float32_t* d_c;
-     float32_t* d_d;
-
-     const size_t bytesA = matrixA.size() * sizeof(float16_t);
-     const size_t bytesB = matrixB.size() * sizeof(float16_t);
-     const size_t bytesC = matrixC.size() * sizeof(float32_t);
-     const size_t bytesD = matrixD.size() * sizeof(float32_t);
-
-     CHECK_HIP_ERROR(hipMalloc(&d_a, bytesA));
-     CHECK_HIP_ERROR(hipMalloc(&d_b, bytesB));
-     CHECK_HIP_ERROR(hipMalloc(&d_c, bytesC));
-     CHECK_HIP_ERROR(hipMalloc(&d_d, bytesD));
-
-     CHECK_HIP_ERROR(hipMemcpy(d_a, matrixA.data(), bytesA, hipMemcpyHostToDevice));
-     CHECK_HIP_ERROR(hipMemcpy(d_b, matrixB.data(), bytesB, hipMemcpyHostToDevice));
-     CHECK_HIP_ERROR(hipMemcpy(d_c, matrixC.data(), bytesC, hipMemcpyHostToDevice));
-     CHECK_HIP_ERROR(hipMemcpy(d_d, matrixD.data(), bytesD, hipMemcpyHostToDevice));
-
-      auto blockDim = dim3(T_BLOCK_X, T_BLOCK_Y);
-      auto gridDim  = dim3(rocwmma::ceilDiv(m, ROCWMMA_M * T_BLOCK_X / WAVE_SIZE),
-             rocwmma::ceilDiv(n, ROCWMMA_N * T_BLOCK_Y));
-
-      std::cout << "Launching GEMM kernel..." << std::endl;
-
-      hipEvent_t startEvent, stopEvent;
-      CHECK_HIP_ERROR(hipEventCreate(&startEvent));
-      CHECK_HIP_ERROR(hipEventCreate(&stopEvent));
-
-      hipExtLaunchKernelGGL(gemm_wmma_d,
-                       gridDim,
-                       blockDim,
-                       0, // sharedMemBytes
-                       0, // stream
-                       startEvent, // Event start
-                       stopEvent, // event stop
-                       0, // flags
-                       m,
-                       n,
-                       k,
-                       d_a,
-                       d_b,
-                       d_c,
-                       d_d,
-                       lda,
-                       ldb,
-                       ldc,
-                       ldd,
-                       alpha,
-                       beta);
-
-      auto elapsedTimeMs = 0.0f;
-      CHECK_HIP_ERROR(hipEventSynchronize(stopEvent));
-      CHECK_HIP_ERROR(hipEventElapsedTime(&elapsedTimeMs, startEvent, stopEvent));
-      CHECK_HIP_ERROR(hipEventDestroy(startEvent));
-      CHECK_HIP_ERROR(hipEventDestroy(stopEvent));
-
-    //   // Release device memory
-    //   CHECK_HIP_ERROR(hipFree(d_a));
-    //   CHECK_HIP_ERROR(hipFree(d_b));
-    //   CHECK_HIP_ERROR(hipFree(d_c));
-    //   CHECK_HIP_ERROR(hipFree(d_d));
-
-    std::cout << "Finished!" << std::endl;
-
-    // copy output from device to host
-    float * out_gpu = new float[m * n];
-    CHECK_HIP_ERROR(hipMemcpy(out_gpu, d_d, m * n * sizeof(float), hipMemcpyDeviceToHost));
-
-    // compare with CPU
-    float * out_cpu = new float[m * n];
-    // cpu_A: ép kiểu từ float16_t sang float
-    std::vector<float> cpu_A(matrixA.size());
-    std::vector<float> cpu_B(matrixB.size());
-
-    for (int i = 0; i < matrixA.size(); i++) {
-        cpu_A[i] = (float)matrixA[i];
-    }
-    for (int i = 0; i < matrixB.size(); i++) {
-        cpu_B[i] = (float)matrixB[i];
-    }
- 
+    // Copy data to device
+    CHECK_HIP_ERROR(hipMemcpy(d_a, hA, m * k * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_b, hB, k * n * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_c, hC, m * n * sizeof(float), hipMemcpyHostToDevice));
 
 
 
-    matmul(cpu_A.data(), cpu_B.data(), out_cpu, m, n, k);
+    // Launch kernel
 
+    auto blockDim = dim3(T_BLOCK_X, T_BLOCK_Y);
+    auto gridDim  = dim3(rocwmma::ceilDiv(m, ROCWMMA_M * T_BLOCK_X / WAVE_SIZE),
+            rocwmma::ceilDiv(n, ROCWMMA_N * T_BLOCK_Y));
+   
+    gemm_wmma_d<<<gridDim, blockDim>>>(m, n, k, d_a, d_b, d_c, d_d, lda, ldb, ldc, ldd, alpha, beta);
+
+    // Copy data back to host
+    CHECK_HIP_ERROR(hipMemcpy(hD, d_d, m * n * sizeof(float), hipMemcpyDeviceToHost));
+    CHECK_HIP_ERROR(hipDeviceSynchronize());
+
+    // Validate results
+
+    // Compute reference
+    float* hRef = (float*)malloc(m * n * sizeof(float));
+    matmul(hA, hB, hRef, m, n, k);
+
+    // Compare results
     int errors = 0;
-    int max_errors = 150;
-    float espilon = 0.0001;
-    for (int i = 0; i < m * n; i++) {
-        if (abs(out_gpu[i] - out_cpu[i]) > espilon) {
-            errors++;
-            if (errors < max_errors) {
-                std::cout << "Error at " << i << " : " << out_gpu[i] << " != " << out_cpu[i] << std::endl;
+    int maxErrors = 10;
+
+    for(int i = 0; i < m * n; i++)
+    {
+        if(hRef[i] != hD[i])
+        {
+            if(errors < maxErrors)
+            {
+                std::cout << "Mismatch at " << i << " expected " << hRef[i] << " actual " << hD[i] << std::endl;
             }
+            errors++;
         }
     }
 
     if (errors > 0) {
-        std::cout << "ERROR " << errors << std::endl;
+        std::cout << "Total errors: " << errors << std::endl;
     } else {
-        std::cout << "PASS" << std::endl;
+        std::cout << "Validation passed!" << std::endl;
     }
-
 }
-
 int main()
 {
     gemm_test(256, 256, 256, 1.0f, 0.0f);
