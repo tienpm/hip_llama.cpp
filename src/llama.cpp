@@ -690,7 +690,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // ----------------------------------------------------------------------------
 // You should parallelize and optimize from this function exploiting multiple GPUs
 //
-int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, int batch=1) {
+int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, Requests * requests, int batch=1) {
   // Count the number of the generated tokens
   int gen_cnt = 0;
 
@@ -718,6 +718,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
   Transformer *d_transformer[num_devices];
   // float *logits[num_devices];
   
+  Tokenizer tokenizers[num_devices];
+
   #pragma omp parallel for num_threads(num_devices)
   for (int d_id = 0; d_id < num_devices; d_id++) {
     int tid = omp_get_thread_num();
@@ -733,7 +735,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     // CHECK_HIP(hipHostMalloc(&logits[d_id], vocab_size * sizeof(float)));
 
     // Copy Transformer to device
-    copy_transformer_to_device(handles[d_id][0], transformer, d_transformer[d_id]);      
+    copy_transformer_to_device(handles[d_id][0], transformer, d_transformer[d_id]);     
+    build_tokenizer(&tokenizers[tid], tokenizer_path, vocab_size);
   }
 #else
   float *logits = (float*)malloc(vocab_size * sizeof(float));
@@ -841,7 +844,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     // encode the (string) prompt into tokens sequence
     fprintf(stderr, "\nDEBUG 1\n");
     int num_prompt_tokens = 0;
-    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    encode(&tokenizers[tid], prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
     fprintf(stderr, "\nDEBUG 2\n");
     if (num_prompt_tokens < 1) {
       fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
@@ -883,7 +886,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
       }
 
       // print the token as string, decode it with the Tokenizer object
-      char* piece = decode(tokenizer, token, next);
+      char* piece = decode(&tokenizers[tid], token, next);
 
       // You don't need to print every tokens are generated.
       // {
@@ -1038,7 +1041,7 @@ int main(int argc, char *argv[]) {
     // {
     long start, end;
     start = time_in_ms();
-    int num_gen_tokens = test(&transformer, &tokenizer, &requests, batch);
+    int num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     end = time_in_ms();
 
     // Your goal is to achieve best throughput(=reduce elapsed time)! 
