@@ -1558,7 +1558,7 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward half of the layers
-    for (unsigned long long l =0; l < p-> n_layers; l++)
+    for (unsigned long long l =0; l < p-> n_layers/2; l++)
     {
         thablas_status = thaDNN_s_rmsnorm_v2(, s->xb, x, w->rms_att_weight + l*dim, dim);
 
