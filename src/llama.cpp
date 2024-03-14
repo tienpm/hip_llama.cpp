@@ -176,7 +176,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     tokens[(*n_tokens)++] = dummy_prefix;
   }
 
-  fprintf(stderr, "\nDEBUG 1.1\n");
+  // fprintf(stderr, "\nDEBUG 1.1\n");
   // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
   // Code point ↔ UTF-8 conversion
   // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
@@ -716,9 +716,11 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
   CHECK_HIP(hipGetDeviceCount(&num_devices));
   thablasHandle_t handles[num_devices][3];
   Transformer *d_transformer[num_devices];
-  // float *logits[num_devices];
+  float *logits[num_devices];
   
   Tokenizer tokenizers[num_devices];
+
+
 
   #pragma omp parallel for num_threads(num_devices)
   for (int d_id = 0; d_id < num_devices; d_id++) {
@@ -737,6 +739,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
     // Copy Transformer to device
     copy_transformer_to_device(handles[d_id][0], transformer, d_transformer[d_id]);     
     build_tokenizer(&tokenizers[tid], tokenizer_path, vocab_size);
+    CHECK_HIP(hipHostMalloc(&logits[tid], vocab_size * sizeof(float)));
   }
 #else
   float *logits = (float*)malloc(vocab_size * sizeof(float));
@@ -842,10 +845,10 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
     int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
 
     // encode the (string) prompt into tokens sequence
-    fprintf(stderr, "\nDEBUG 1\n");
+    // fprintf(stderr, "\nDEBUG 1\n");
     int num_prompt_tokens = 0;
     encode(&tokenizers[tid], prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
-    fprintf(stderr, "\nDEBUG 2\n");
+    // fprintf(stderr, "\nDEBUG 2\n");
     if (num_prompt_tokens < 1) {
       fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
       exit(EXIT_FAILURE);
@@ -858,15 +861,11 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
     int pos = 0;     // position in the sequence
     int steps = requests->max_seq_len; // max sequence length
     thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
-
-    float *logits;
-    CHECK_HIP(hipHostMalloc(&logits, vocab_size * sizeof(float)));
     while (pos < steps) {
       // forward the transformer to get logits for the next token
       float* d_logits = nullptr;
       tha_status = thaDNN_s_forward(handles[tid][0], handles[tid][1], handles[tid][2], d_transformer[tid], token, pos, d_logits);
-      CHECK_HIP(hipMemcpy(logits, d_logits, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
-      CHECK_HIP(hipDeviceSynchronize());
+      CHECK_HIP(hipMemcpy(logits[tid], d_logits, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
 
       // advance the state machine
       if (pos < num_prompt_tokens - 1) {
@@ -874,7 +873,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
         next = prompt_tokens[pos + 1];
       } else {
         // otherwise sample the next token from the logits
-        next = sample(&samplers[idx], logits);
+        next = sample(&samplers[idx], logits[tid]);
         //next = sample_greedy(sampler, logits);
         //next = sample_determin(sampler, logits, rng_states, idx);
       }
