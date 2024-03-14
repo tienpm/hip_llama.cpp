@@ -10,36 +10,28 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <omp.h>         // OpenMP
+#include <sched.h>
 
 #include <fstream>
 #include <iostream>
+#include <vector>
+#include <hip/hip_runtime.h>
+// #include <rccl/rccl.h>  // RCCL
 
 #include "seq.hpp"
 #include "thaDNN.hpp"
 #include "thaBLAS.hpp"
+#include "utils.hpp"
 
-#define MODE 0
-
-void free_run_state(RunState* s) {
-  free(s->x);
-  free(s->xb);
-  free(s->xb2);
-  free(s->hb);
-  free(s->hb2);
-  free(s->q);
-  free(s->att);
-  free(s->logits);
-  free(s->key_cache);
-  free(s->value_cache);
-}
-
-void free_transformer(Transformer* t) {
-  // close the memory mapping
-  if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
-  if (t->fd != -1) { close(t->fd); }
-  // free the RunState buffers
-  free_run_state(&t->state);
-}
+/*
+ * STRATEGY_OPTION
+ * - 0: CPU sequence
+ * - 1: GPU 1 request, 1 GPU
+ * - 2: GPU 1 request, multiple GPUs
+ * - 3: Static batching
+ * - 4: Continous batching
+ * */
+#define STRATEGY_OPT 2
 
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
@@ -184,6 +176,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     tokens[(*n_tokens)++] = dummy_prefix;
   }
 
+  fprintf(stderr, "\nDEBUG 1.1\n");
   // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
   // Code point ↔ UTF-8 conversion
   // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
@@ -709,16 +702,45 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
   }
 
   int vocab_size = transformer->config.vocab_size;
+#if STRATEGY_OPT==1
   thablasHandle_t handle1, handle2, handle3;
   thablasCreate(&handle1);
   thablasCreate(&handle2);
   thablasCreate(&handle3);
-  Transformer *transformer_d = nullptr;
-  copy_transformer_to_device(handle1, transformer, transformer_d);
-  // float *logits = (float*)malloc(vocab_size * sizeof(float));
+  Transformer *d_transformer = nullptr;
+  copy_transformer_to_device(handle1, transformer, d_transformer);
   float *logits;
   CHECK_HIP(hipHostMalloc(&logits, vocab_size * sizeof(float)));
+#elif STRATEGY_OPT==2
+  int num_devices;
+  CHECK_HIP(hipGetDeviceCount(&num_devices));
+  thablasHandle_t handles[num_devices][3];
+  Transformer *d_transformer[num_devices];
+  // float *logits[num_devices];
+  
+  #pragma omp parallel for num_threads(num_devices)
+  for (int d_id = 0; d_id < num_devices; d_id++) {
+    int tid = omp_get_thread_num();
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(tid, &cpu_set);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+    CHECK_HIP(hipSetDevice(d_id));
+    thablasCreate(&handles[d_id][0]);
+    thablasCreate(&handles[d_id][1]);
+    thablasCreate(&handles[d_id][2]);
+    // Malloc logits
+    // CHECK_HIP(hipHostMalloc(&logits[d_id], vocab_size * sizeof(float)));
 
+    // Copy Transformer to device
+    copy_transformer_to_device(handles[d_id][0], transformer, d_transformer[d_id]);      
+  }
+#else
+  float *logits = (float*)malloc(vocab_size * sizeof(float));
+#endif
+ 
+
+#if STRATEGY_OPT==1
   // Loop for the multiple requests
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     std::string gen_str = "";
@@ -742,9 +764,9 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
     while (pos < steps) {
       // forward the transformer to get logits for the next token
-      float* logits_d = nullptr;
-      tha_status = thaDNN_s_forward(handle1, handle2, handle3, transformer_d, token, pos, logits_d);
-      CHECK_HIP(hipMemcpy(logits, logits_d, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      float* d_logits = nullptr;
+      tha_status = thaDNN_s_forward(handle1, handle2, handle3, d_transformer, token, pos, d_logits);
+      CHECK_HIP(hipMemcpy(logits, d_logits, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
       CHECK_HIP(hipDeviceSynchronize());
 
       // advance the state machine
@@ -797,10 +819,112 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
       gen_cnt += pos-1;
     }
   }
+  
+  fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
+#elif STRATEGY_OPT==2
+  fprintf(stderr, "\nNUM DEVICES: %d\n", num_devices);
+  #pragma omp parallel for num_threads(num_devices) reduction(+:gen_cnt)
+  for(int idx = 0; idx < requests->num_reqs; idx++) {
+    int tid = omp_get_thread_num();
+    fprintf(stderr, "\nThread: %d\n", tid);
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(tid, &cpu_set);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+    // SET DEVICE FOR THIS THREAD
+    CHECK_HIP(hipSetDevice(tid));
+
+    std::string gen_str = "";
+    char* prompt = get_str_req_ptr(requests, idx);
+    int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+
+    // encode the (string) prompt into tokens sequence
+    fprintf(stderr, "\nDEBUG 1\n");
+    int num_prompt_tokens = 0;
+    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    fprintf(stderr, "\nDEBUG 2\n");
+    if (num_prompt_tokens < 1) {
+      fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+      exit(EXIT_FAILURE);
+    }
+
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int token = prompt_tokens[0]; // kick off with the first token in the prompt
+    int pos = 0;     // position in the sequence
+    int steps = requests->max_seq_len; // max sequence length
+    thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
+
+    float *logits;
+    CHECK_HIP(hipHostMalloc(&logits, vocab_size * sizeof(float)));
+    while (pos < steps) {
+      // forward the transformer to get logits for the next token
+      float* d_logits = nullptr;
+      tha_status = thaDNN_s_forward(handles[tid][0], handles[tid][1], handles[tid][2], d_transformer[tid], token, pos, d_logits);
+      CHECK_HIP(hipMemcpy(logits, d_logits, vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      CHECK_HIP(hipDeviceSynchronize());
+
+      // advance the state machine
+      if (pos < num_prompt_tokens - 1) {
+        // if we are still processing the input prompt, force the next prompt token
+        next = prompt_tokens[pos + 1];
+      } else {
+        // otherwise sample the next token from the logits
+        next = sample(&samplers[idx], logits);
+        //next = sample_greedy(sampler, logits);
+        //next = sample_determin(sampler, logits, rng_states, idx);
+      }
+      pos++;
+
+      // data-dependent terminating condition: the BOS (=1) token delimits sequences
+      if (next == 1 || next == 2) { 
+        break;
+      }
+
+      // print the token as string, decode it with the Tokenizer object
+      char* piece = decode(tokenizer, token, next);
+
+      // You don't need to print every tokens are generated.
+      // {
+      // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+      // fflush(stdout);
+      // }
+
+      // gen_str += piece;
+
+      append_str(piece, gen_str);
+
+      token = next;
+
+      // init the timer here because the first iteration can be slower
+      // this timer is not important
+      if (start == 0) { start = time_in_ms(); }
+
+    }
+    // printf("\n");
+
+    gen_str += "\n";
+    strcpy(get_str_gen_ptr(requests, idx), gen_str.c_str());
+    free(prompt_tokens);
+
+    // report achieved tok/s (pos-1 because the timer starts after first iteration)
+    if (pos > 1) {
+      long end = time_in_ms();
+      fprintf(stderr, "\nachieved tok/s: %f\n\n", (pos-1) / (double)(end-start)*1000);
+      gen_cnt += pos-1;
+    }
+  }
+#else
+  printf("Not implemented!!!");
+#endif
 
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     free_sampler(&samplers[idx]);
   }
+
+  fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
+
   return gen_cnt;
 }
 

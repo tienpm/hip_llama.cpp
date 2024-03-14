@@ -1,7 +1,3 @@
-#include "hip_helper.hpp"
-#include "thaBLAS.hpp"
-#include "models.hpp"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -16,6 +12,10 @@
 #include <iostream>
 
 #include <hip/hip_runtime.h>
+#include "hip_helper.hpp"
+#include "thaBLAS.hpp"
+#include "models.hpp"
+#include "utils.hpp"
 
 void alloc_mat(float **m, int R, int C) {
   // *m = (float *)aligned_alloc(32, sizeof(float) * R * C);
@@ -177,6 +177,30 @@ void build_transformer(Transformer *t, char* checkpoint_path) {
   print_transformer(t);
 }
 
+void free_run_state(RunState* s) {
+  free(s->x);
+  free(s->xb);
+  free(s->xb2);
+  free(s->hb);
+  free(s->hb2);
+  free(s->q);
+  free(s->att);
+  free(s->logits);
+  free(s->key_cache);
+  free(s->value_cache);
+}
+
+void free_transformer(Transformer* t) {
+  // close the memory mapping
+  if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
+  if (t->fd != -1) { close(t->fd); }
+  // free the RunState buffers
+  free_run_state(&t->state);
+}
+
+/*
+ *      UTILS ON GPU
+ * */
 
 // copy transformer checkpoint data from host to device
 // all scalar values and pointer values are still stored on host
@@ -258,4 +282,10 @@ void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transf
   CHECK_HIP(hipMemcpy(t_d->state.value_cache, t_h->state.value_cache, n_layers * seq_len * kv_dim * sizeof(float), hipMemcpyHostToDevice));
 }
 
-void free_transformer_device() {}
+void free_device_run_state() {
+
+}
+
+void free_device_transformer() {
+
+}
