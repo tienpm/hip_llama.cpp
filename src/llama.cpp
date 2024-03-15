@@ -705,34 +705,19 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
     build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
   }
 
-  int num_devices;
-  CHECK_HIP(hipGetDeviceCount(&num_devices));
-  if (!num_devices)
-  {
-      printf("THABLAS SOFTMAX V2 ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
-      return THABLAS_STATUS_ALLOC_FAILED;
-  }
-
   n_batches = 1;
   int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
-  TransformerWeights *weight_d[num_devices];
-  RunState *state_d_batch[num_devices];
+  TransformerWeights *weight_d;
+  RunState *state_d_batch;
   float *logits[n_batches];
 
-  thablasHandle_t handle[n_batches];
-  for(int g=0 ; g<num_devices ; ++g)
-  {
-    CHECK_HIP(hipSetDevice(g));
-    thablasCreate(&handle[g]);
-    copy_weight_to_device(handle[g], transformer, weight_d[g]);
-    for(int b=0 ; b<n_batches ; ++b)
-    {
-      alloc_state_to_device_batch(transformer, state_d_batch[g], n_batches);
-    }
-  }
 
-  float *logits[n_batches];
+  thablasHandle_t handle;
+  thablasCreate(&handle);
+  copy_weight_to_device(transformer, weight_d);
+  alloc_state_to_device_batch(transformer, state_d_batch, n_batches);
+
   for(int b=0 ; b<n_batches ; ++b)
   {
     CHECK_HIP(hipHostMalloc(&logits[b], vocab_size * sizeof(float)));
@@ -790,7 +775,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, Requests * requests, in
       }
     }
 
-    tha_status = thaDNN_s_forward_batch(handle1, handle2, handle3, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_d);
+    tha_status = thaDNN_s_forward_batch(handle, handle, handle, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_d);
     for(int b=0 ; b<n_batches ; ++b)
       CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
     CHECK_HIP(hipDeviceSynchronize());
