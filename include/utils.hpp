@@ -49,4 +49,19 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
 
 void build_transformer(Transformer *t, char* checkpoint_path);
 
+void free_run_state(RunState* s);
+
+void free_transformer(Transformer* t); 
+// ON GPU functions
+
 void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d);
+
+void free_device_run_state();
+
+void free_device_transformer();
+
+void copy_weight_to_device(Transformer* t_h, TransformerWeights* &w_d);
+
+void alloc_state_to_device(Transformer* t_h, RunState* &s_d);
+
+void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int n_batches);
