@@ -59,3 +59,9 @@ void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transf
 void free_device_run_state();
 
 void free_device_transformer();
+
+void copy_weight_to_device(Transformer* t_h, TransformerWeights* &w_d);
+
+void alloc_state_to_device(Transformer* t_h, RunState* &s_d);
+
+void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int n_batches);

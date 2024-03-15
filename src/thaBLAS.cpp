@@ -16,7 +16,7 @@ thablasStatus_t thablasCreate(thablasHandle_t* handle)
     CHECK_HIP(hipGetDevice(&current_gpu_id));
     handle->current_gpu_id = current_gpu_id;
 
-    CHECK_HIP(hipStreamCreate(&handle->stream_));
+    // CHECK_HIP(hipStreamCreate(&handle->stream_));
 
     return THABLAS_STATUS_SUCCESS;
 }
@@ -375,13 +375,11 @@ __global__ void thaDNN_s_matmulvec_v2_kernel(float *C, float *B, float *A, int K
     int gx = blockIdx.x;
     int lx = threadIdx.x;
     float sum = 0.0f;
-    for (int k=lx ; k<K ; k+=blockDim.x)
-    {
+    for (int k=lx ; k<K ; k+=blockDim.x) {
         sum += A[gx*K + k] * B[k];
     }
     sum = block_reduce_sum(sum);
-    if (lx == 0)
-    {
+    if (lx == 0) {
         C[gx] = sum;
     }
 }

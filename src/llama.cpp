@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <omp.h>         // OpenMP
+#include <mutex>
 #include <sched.h>
 
 #include <fstream>
@@ -31,7 +32,7 @@
  * - 3: Static batching
  * - 4: Continous batching
  * */
-#define STRATEGY_OPT 2
+#define STRATEGY_OPT 3
 
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
@@ -690,7 +691,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // ----------------------------------------------------------------------------
 // You should parallelize and optimize from this function exploiting multiple GPUs
 //
-int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, Requests * requests, int batch=1) {
+int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, Requests * requests, int n_batches=1) {
   // Count the number of the generated tokens
   int gen_cnt = 0;
 
@@ -701,7 +702,6 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
     build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
   }
 
-  int vocab_size = transformer->config.vocab_size;
 #if STRATEGY_OPT==1
   thablasHandle_t handle1, handle2, handle3;
   thablasCreate(&handle1);
@@ -719,6 +719,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
   float *logits[num_devices];
   
   Tokenizer tokenizers[num_devices];
+  int vocab_size = transformer->config.vocab_size;
 
 
 
@@ -742,7 +743,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
     CHECK_HIP(hipHostMalloc(&logits[tid], vocab_size * sizeof(float)));
   }
 #else
-  float *logits = (float*)malloc(vocab_size * sizeof(float));
+  // float *logits = (float*)malloc(vocab_size * sizeof(float));
 #endif
  
 
@@ -917,6 +918,177 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
       gen_cnt += pos-1;
     }
   }
+#elif STRATEGY_OPT==3
+  // Continous batching - Multi GPU
+  int num_devices;
+  CHECK_HIP(hipGetDeviceCount(&num_devices));
+  if (!num_devices)
+  {
+      printf("THABLAS SOFTMAX V2 ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+      return THABLAS_STATUS_ALLOC_FAILED;
+  }
+  std::mutex mtx_idx, mtx_n_done;
+  int current_idx = 0;
+  int n_done = 0;
+  
+  int n_layers = transformer->config.n_layers;
+  int vocab_size = transformer->config.vocab_size;
+  int gen_cnt_each_device[num_devices];
+  if (n_layers == 12)
+    n_batches = 16;
+  if (n_layers == 16)
+    n_batches = 2;
+  else
+    n_batches = 1;
+
+  // Each thread handle 1 device
+  #pragma omp parallel num_threads(num_devices)
+  {
+    int gid = omp_get_thread_num();
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(gid, &cpu_set);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+    fprintf(stderr, "\nDevice ID %d\n", gid);
+    CHECK_HIP(hipSetDevice(gid));
+
+    TransformerWeights *weight_d;
+    RunState *state_d_batch;
+    thablasHandle_t handle;
+
+    thablasCreate(&handle);
+    copy_weight_to_device(transformer, weight_d);
+    alloc_state_to_device_batch(transformer, state_d_batch, n_batches);
+
+    float *logits_host;
+    // for(int b=0 ; b<n_batches ; ++b)
+    // {
+    CHECK_HIP(hipHostMalloc(&logits_host, n_batches * vocab_size * sizeof(float), hipHostMallocNonCoherent));
+    // }
+
+    int indices[n_batches];
+    for(int b=0 ; b<n_batches ; ++b)
+      indices[b] = -1;
+    gen_cnt_each_device[gid] = 0;
+
+    std::string gen_str[n_batches];
+    char *prompt[n_batches];
+    int *prompt_tokens[n_batches];
+    int num_prompt_tokens[n_batches];
+
+    // long start = 0; // used to time our code, only initialized after first iteration
+    int next[n_batches]; // will store the next token in the sequence
+    int token[n_batches]; // kick off with the first token in the prompt
+    int pos[n_batches]; // position in the sequence
+    int steps[n_batches]; // max sequence length
+    bool is_done[n_batches];
+    float* logits_d[n_batches];
+
+    thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
+
+    Tokenizer private_tokenizer;
+    build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
+
+    while (n_done < requests->num_reqs) {
+
+      // int has_request = 0;
+      // assgin new request to GPU
+      #pragma omp parallel for
+      for(int b=0 ; b<n_batches ; ++b) {
+        if (indices[b] <= -1) {
+          mtx_idx.lock();
+          int cur_id = current_idx;
+          if (cur_id < requests->num_reqs) ++current_idx;
+          mtx_idx.unlock();
+
+          if (cur_id >= requests->num_reqs) continue;
+
+          fprintf(stderr, "\nDevice %d - Request %d\n", gid, cur_id);
+          indices[b] = cur_id;
+          gen_str[b] = "";
+          prompt[b] = get_str_req_ptr(requests, indices[b]);
+          prompt_tokens[b] = (int*)malloc((strlen(prompt[b])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+
+          // encode the (string) prompt into tokens sequence
+          num_prompt_tokens[b] = 0;
+          encode(&private_tokenizer, prompt[b], 1, 0, prompt_tokens[b], &num_prompt_tokens[b]);
+          if (num_prompt_tokens[b] < 1) {
+            fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+            exit(EXIT_FAILURE);
+          }
+
+          token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
+          pos[b] = 0; // position in the sequence
+          steps[b] = requests->max_seq_len; // max sequence length
+          is_done[b] = false;
+          logits_d[b] = nullptr;
+        }
+
+        // if (indices[b] > -1) ++has_request;
+      }
+      // if (!has_request) break;
+
+      tha_status = thaDNN_s_forward_batch(handle, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
+      // for(int b=0 ; b<n_batches ; ++b)
+      //   if (logits_d[b] != nullptr)
+      //     CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+
+      // advance the state machine
+      #pragma omp parallel for
+      for(int b=0 ; b<n_batches ; ++b) {
+        if (indices[b] > -1) 
+        {
+          if (pos[b] < num_prompt_tokens[b] - 1) {
+            next[b] = prompt_tokens[b][pos[b] + 1];
+          } else {
+            next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
+          }
+
+          // if (next[b] == 1) {
+          if (next[b] == 1 || next[b] == 2) {
+            is_done[b] = true;
+          }
+          else
+          {
+            char* piece = decode(&private_tokenizer, token[b], next[b]);
+            // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+            // fflush(stdout);
+            append_str(piece, gen_str[b]);
+            token[b] = next[b];
+
+            ++pos[b]; // TODO: update `++pos` positon
+            if (pos[b] >= steps[b]) {
+              is_done[b] = true;
+            }
+          }
+        }
+        ++gen_cnt_each_device[gid];
+      }
+      
+      // de-assgin the requests
+      #pragma omp parallel for
+      for(int b=0 ; b<n_batches ; ++b)
+      {
+        if (is_done[b] && indices[b] > -1)
+        {
+          gen_str[b] += "\n";
+          strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
+          free(prompt_tokens[b]);     
+          fprintf(stderr, "\nDevice %d - DONE %d\n", gid, indices[b]);   
+          indices[b] = -1;
+          is_done[b] = false;
+          pos[b] = 0;
+          token[b] = 0;
+
+          mtx_n_done.lock();
+          ++n_done;
+          mtx_n_done.unlock();
+        }
+      }
+
+      // if (start == 0) { start = time_in_ms();}
+    }
+  }
 #else
   printf("Not implemented!!!");
 #endif
@@ -925,6 +1097,9 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
     free_sampler(&samplers[idx]);
   }
 
+  gen_cnt = 0;
+  for(int gid = 0; gid < num_devices; ++gid)
+    gen_cnt += gen_cnt_each_device[gid];
   fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
 
   return gen_cnt;

@@ -282,6 +282,103 @@ void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transf
   CHECK_HIP(hipMemcpy(t_d->state.value_cache, t_h->state.value_cache, n_layers * seq_len * kv_dim * sizeof(float), hipMemcpyHostToDevice));
 }
 
+// all pointer values are still stored on host
+// only arrays are stored on device
+void copy_weight_to_device(Transformer* t_h, TransformerWeights* &w_d)
+{
+  Config *p = &t_h->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int layer = p->n_layers;
+  int n_layers = layer;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+
+  w_d = (TransformerWeights*)malloc(sizeof(TransformerWeights));
+
+  CHECK_HIP(hipMalloc(&w_d->token_embedding_table, vocab_size * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->rms_att_weight, layer * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->rms_ffn_weight, layer * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->wq, layer * dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->wk, layer * dim * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->wv, layer * dim * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->wo, layer * dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->w1, layer * hidden_dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->w2, layer * dim * hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->w3, layer * hidden_dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->rms_final_weight, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&w_d->wcls, dim * vocab_size * sizeof(float)));  
+
+  CHECK_HIP(hipMemcpy(w_d->token_embedding_table, t_h->weights.token_embedding_table, vocab_size * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->rms_att_weight, t_h->weights.rms_att_weight, layer * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->rms_ffn_weight, t_h->weights.rms_ffn_weight, layer * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->wq, t_h->weights.wq, layer * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->wk, t_h->weights.wk, layer * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->wv, t_h->weights.wv, layer * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->wo, t_h->weights.wo, layer * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->w1, t_h->weights.w1, layer * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->w2, t_h->weights.w2, layer * dim * hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->w3, t_h->weights.w3, layer * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->rms_final_weight, t_h->weights.rms_final_weight, dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(w_d->wcls, t_h->weights.wcls, dim * vocab_size * sizeof(float), hipMemcpyHostToDevice));
+}
+
+// all pointer values are still stored on host
+// only arrays are stored on device
+void alloc_state_to_device(Transformer* t_h, RunState* &s_d)
+{
+  Config *p = &t_h->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int layer = p->n_layers;
+  int n_layers = layer;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+
+  s_d = (RunState*)malloc(sizeof(RunState));
+
+  CHECK_HIP(hipMalloc(&s_d->x, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->xb, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->xb2, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->hb, hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->hb2, hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->q, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->att, n_heads * seq_len * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->logits, vocab_size * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->key_cache, n_layers * seq_len * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&s_d->value_cache, n_layers * seq_len * kv_dim * sizeof(float)));
+}
+
+void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int n_batches)
+{
+  Config *p = &t_h->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int layer = p->n_layers;
+  int n_layers = layer;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+
+  s_d_batch = (RunState*)malloc(sizeof(RunState));
+
+  CHECK_HIP(hipMalloc(&s_d_batch->x, dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->xb, dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->xb2, dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->hb, hidden_dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->hb2, hidden_dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->q, dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->att, n_heads * seq_len * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->logits, vocab_size * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->key_cache, n_layers * seq_len * kv_dim * sizeof(float) * n_batches));
+  CHECK_HIP(hipMalloc(&s_d_batch->value_cache, n_layers * seq_len * kv_dim * sizeof(float) * n_batches));
+}
+
 void free_device_run_state() {
 
 }
