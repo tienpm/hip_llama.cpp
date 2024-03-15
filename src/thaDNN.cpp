@@ -1648,7 +1648,7 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle
     output_logits = s1->logits;
 return thablas_status;
 
-thablasStatus_t thaDNN_s_forward_batch_multi_gpus(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* output_logits[]) {
+thablasStatus_t thaDNN_s_forward_batch_multi_gpu(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* output_logits[]) {
     // float *x[n_batches];
     // int dim = p->dim;
     // int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 
@@ -1732,7 +1732,7 @@ thablasStatus_t thaDNN_s_forward_batch_multi_gpus(thablasHandle_t handle1, thabl
     int hidden_dim_0 =  p->hidden_dim;
     int head_size_0 = dim_0 / p->n_heads;
 
-    / forward half of th/e layers
+    // forward half of the layers
     for (unsigned long long l =0; l < p-> n_layers; l++)
     {
         thablas_status = thaDNN_s_rmsnorm_v2_batch(handle_half0, n_batches, s_batch->xb, s_batch->x, w->rms_att_weight + l*dim_0, dim_0, dim_0);
