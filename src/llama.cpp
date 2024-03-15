@@ -1106,8 +1106,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char* tokenizer_path, R
   for(int gid=0 ; gid<n_devices ; ++gid) {
     CHECK_HIP(hipSetDevice(gid));
     thablasCreate(&handle[gid]);
-    // copy_transformer_pipeline_to_device(handle[gid], transformer, transformer_d[gid], pipe_size, gid);
-    copy_transformer_to_device(handle[gid], transformer, transformer_d[gid]);
+    copy_transformer_pipeline_to_device(handle[gid], transformer, transformer_d[gid], pipe_size, gid);
+    // copy_transformer_to_device(handle[gid], transformer, transformer_d[gid]);
   }
 
   int vocab_size = transformer->config.vocab_size;
