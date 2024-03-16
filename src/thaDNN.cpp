@@ -1531,7 +1531,8 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle
     return thablas_status;
 }
 
-thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* output_logits[]) {
+// thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* output_logits[]) {
+thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* logits_host) {
     float *x[n_batches];
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 
@@ -1553,7 +1554,7 @@ thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t 
     {
         content_row[b] = w->token_embedding_table + token[b] * dim;
         // memcpy(x[b], content_row[b], dim*sizeof(float)); // TODO: copy device to device
-        CHECK_HIP(hipMemcpy(s_batch->x + b * dim, content_row[b], dim*sizeof(float), hipMemcpyDeviceToDevice));
+        CHECK_HIP(hipMemcpy(s_batch->x + b * dim, content_row[b], dim * sizeof(float), hipMemcpyDeviceToDevice));
     }
 
     // forward all the layers
@@ -1594,9 +1595,11 @@ thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t 
     }
 
     thablas_status = thaDNN_s_rmsnorm_v2_batch(handle1, n_batches, s_batch->x, s_batch->x, w->rms_final_weight, dim, dim);
-    thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, s_batch->logits, s_batch->x, w->wcls, dim, p->vocab_size, 0, 0, pos_d, p->vocab_size, dim);
-    for(int b=0 ; b<n_batches ; ++b)    
-        output_logits[b] = s_batch->logits + b * p->vocab_size;
+    thablas_status = thaDNN_s_matmulvec_v2_batch(handle1, n_batches, logits_host, s_batch->x, w->wcls, dim, p->vocab_size, 0, 0, pos_d, p->vocab_size, dim);
+    // for(int b=0 ; b<n_batches ; ++b)    
+    //     output_logits[b] = s_batch->logits + b * p->vocab_size;
         
+    CHECK_HIP(hipDeviceSynchronize());
+    CHECK_HIP(hipFree(pos_d));
     return thablas_status;
 }

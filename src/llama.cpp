@@ -713,8 +713,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
   if (n_layers == 12)
-    n_batches = 16;
-  if (n_layers == 16)
+    n_batches = 8;
+  else if (n_layers == 16)
     n_batches = 2;
   else
     n_batches = 1;
@@ -730,29 +730,28 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   #pragma omp parallel num_threads(n_devices)
   {
     int gid = omp_get_thread_num();
+    CHECK_HIP(hipSetDevice(gid));
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
     CPU_SET(gid, &cpu_set);
     sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
     fprintf(stderr, "\nDevice ID %d\n", gid);
-    CHECK_HIP(hipSetDevice(gid));
 
     Tokenizer private_tokenizer;
     build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
 
     TransformerWeights *weight_d;
     RunState *state_d_batch;
-    float *logits[n_batches];
-    for(int b=0 ; b<n_batches ; ++b)
-      CHECK_HIP(hipHostMalloc(&logits[b], vocab_size * sizeof(float)));
+    // float *logits[n_batches];
+    // for(int b=0 ; b<n_batches ; ++b)
+    //   CHECK_HIP(hipHostMalloc(&logits[b], vocab_size * sizeof(float)));
     float *logits_host;
-    CHECK_HIP(hipHostMalloc(&logits_host, n_batches * vocab_size * sizeof(float), hipHostMallocNonCoherent));
+    CHECK_HIP(hipHostMalloc(&logits_host, n_batches * vocab_size * sizeof(float)));
 
     thablasHandle_t handle;
     thablasCreate(&handle);
     copy_weight_to_device(transformer, weight_d);
     alloc_state_to_device_batch(transformer, state_d_batch, n_batches);
-
 
     int indices[n_batches];
     for(int b=0 ; b<n_batches ; ++b)
@@ -774,7 +773,13 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
     gen_cnt_each_device[gid] = 0;
 
-    while (n_done < requests->num_reqs) {
+    while (1) {
+      // check for stop condition
+      bool stop = false;
+      mtx_n_done.lock();
+      stop = (n_done >= requests->num_reqs);
+      mtx_n_done.unlock();
+      if (stop) break;
 
       // assgin new request to GPU
       for(int b=0 ; b<n_batches ; ++b) {
@@ -810,23 +815,23 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           is_done[b] = false;
           logits_d[b] = nullptr;
         }
-        ++gen_cnt_each_device[gid];
       }
 
-      tha_status = thaDNN_s_forward_batch(handle, handle, handle, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_d);
-      for(int b=0 ; b<n_batches ; ++b)
-        CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      tha_status = thaDNN_s_forward_batch(handle, handle, handle, n_batches, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
+      // for(int b=0 ; b<n_batches ; ++b)
+      //   CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
       CHECK_HIP(hipDeviceSynchronize());
 
       // advance the state machine
-      for(int b=0 ; b<n_batches ; ++b)
+      for(int b=0 ; b<n_batches ; ++b) {
       if (indices[b] > -1) 
       {
         if (pos[b] < num_prompt_tokens[b] - 1) {
           next[b] = prompt_tokens[b][pos[b] + 1];
         } else {
-          // next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
-          next[b] = sample(&samplers[indices[b]], logits[b]);
+          next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
+          // next[b] = prompt_tokens[b][1];
+          // next[b] = sample(&samplers[indices[b]], logits[b]);
         }
 
         if (next[b] == 1 || next[b] == 2) {
@@ -838,11 +843,13 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           append_str(piece, gen_str[b]);
           token[b] = next[b];
 
-          ++pos[b]; // TODO: update `++pos` positon
+          ++pos[b];
           if (pos[b] >= steps[b]) {
             is_done[b] = true;
           }
         }
+      }
+      ++gen_cnt_each_device[gid];
       }
       
       // de-assgin the requests
@@ -856,6 +863,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           fprintf(stderr, "\nDevice %d - DONE %d\n", gid, indices[b]);     
           indices[b] = -1;
           is_done[b] = false;
+          pos[b] = 0;
+          token[b] = 0;
 
           mtx_n_done.lock();
           ++n_done;
