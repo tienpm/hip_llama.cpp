@@ -33,6 +33,12 @@ void zero_vec(float *m, int N);
 
 bool compareFiles(const std::string& filePath1, const std::string& filePath2);
 
+/*
+ * ===========================================================================
+ *    Initial Transformer 
+ * ===========================================================================
+ */
+
 void malloc_run_state(RunState* s, Config* p);
 
 void print_transformer(Transformer* t);
@@ -42,6 +48,11 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
 void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights, int* fd, float** data, ssize_t* file_size);
 
 void build_transformer(Transformer *t, char* checkpoint_path);
+
+void free_run_state(RunState* s);
+
+void free_transformer(Transformer* t); 
+// ON GPU functions
 
 void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d);
 
