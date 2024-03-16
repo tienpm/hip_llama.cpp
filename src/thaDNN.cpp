@@ -1552,7 +1552,8 @@ thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t 
     for(int b=0 ; b<n_batches ; ++b)
     {
         content_row[b] = w->token_embedding_table + token[b] * dim;
-        memcpy(x[b], content_row[b], dim*sizeof(float)); // TODO: copy device to device
+        // memcpy(x[b], content_row[b], dim*sizeof(float)); // TODO: copy device to device
+        CHECK_HIP(hipMemcpy(s_batch->x + b * dim, content_row[b], dim*sizeof(float), hipMemcpyDeviceToDevice));
     }
 
     // forward all the layers

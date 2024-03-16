@@ -38,6 +38,7 @@ thablasStatus_t thaDNN_h2d_s_swiglu(float *hb, float *hb2, int hidden_dim);
 thablasStatus_t thaDNN_h2d_s_softmax_v2(float* x, int size);
 
 thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s, int token[], int pos[], float* output_logits[]);
+// thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* logits_host);
 
 thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int n_batches, int pos[], int pos_d[], int n_heads, int n_layers, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int dim, int kv_mul);
 
