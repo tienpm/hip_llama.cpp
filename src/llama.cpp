@@ -14,31 +14,16 @@
 
 #include <fstream>
 #include <iostream>
+#include <vector>
+#include <hip/hip_runtime.h>
+// #include <rccl/rccl.h>  // RCCL
 
 #include "seq.hpp"
 #include "thaDNN.hpp"
 #include "thaBLAS.hpp"
+#include "utils.hpp"
 
-void free_run_state(RunState* s) {
-  free(s->x);
-  free(s->xb);
-  free(s->xb2);
-  free(s->hb);
-  free(s->hb2);
-  free(s->q);
-  free(s->att);
-  free(s->logits);
-  free(s->key_cache);
-  free(s->value_cache);
-}
 
-void free_transformer(Transformer* t) {
-  // close the memory mapping
-  if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
-  if (t->fd != -1) { close(t->fd); }
-  // free the RunState buffers
-  free_run_state(&t->state);
-}
 
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
@@ -183,6 +168,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     tokens[(*n_tokens)++] = dummy_prefix;
   }
 
+  // fprintf(stderr, "\nDEBUG 1.1\n");
   // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
   // Code point ↔ UTF-8 conversion
   // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
