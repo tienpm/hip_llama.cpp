@@ -310,7 +310,7 @@ void copy_weight_to_device(Transformer* t_h, TransformerWeights* &w_d)
   CHECK_HIP(hipMalloc(&w_d->w3, layer * hidden_dim * dim * sizeof(float)));
   CHECK_HIP(hipMalloc(&w_d->rms_final_weight, dim * sizeof(float)));
   CHECK_HIP(hipMalloc(&w_d->wcls, dim * vocab_size * sizeof(float)));  
-
+  
   CHECK_HIP(hipMemcpy(w_d->token_embedding_table, t_h->weights.token_embedding_table, vocab_size * dim * sizeof(float), hipMemcpyHostToDevice));
   CHECK_HIP(hipMemcpy(w_d->rms_att_weight, t_h->weights.rms_att_weight, layer * dim * sizeof(float), hipMemcpyHostToDevice));
   CHECK_HIP(hipMemcpy(w_d->rms_ffn_weight, t_h->weights.rms_ffn_weight, layer * dim * sizeof(float), hipMemcpyHostToDevice));
@@ -379,10 +379,4 @@ void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int n_b
   CHECK_HIP(hipMalloc(&s_d_batch->value_cache, n_layers * seq_len * kv_dim * sizeof(float) * n_batches));
 }
 
-void free_device_run_state() {
-
-}
-
-void free_device_transformer() {
-
-}
+void free_transformer_device() {}

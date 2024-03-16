@@ -6,11 +6,6 @@
 #include <hip/hip_runtime.h>
 #include <omp.h>
 
-inline __device__ float maxf(float A, float B)
-{
-    return (A>B?A:B);
-}
-
 __device__ float warp_reduce_sum(float val)
 {
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
@@ -41,10 +36,9 @@ __device__ float block_reduce_sum(float val)
 
 __device__ float warp_reduce_max(float val) {
   for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
-    val = maxf(val, __shfl_xor(val, offset));
+    val = std::max(val, __shfl_xor(val, offset));
   return val;
 }
-
 
 __device__ float block_reduce_max(float val) {
   static __shared__ float shared[MAX_BLOCK_SIZE / WARP_SIZE];
@@ -82,10 +76,14 @@ __global__ void thaDNN_s_multiheads_1_v2_batch_kernel(int pos[], int n_heads, in
     int t = gx % (pos_b + 1);
     int h = gx / (pos_b + 1);
 
+    float* s_q = s_q_batch + b * dim;
+    float* s_att = s_att_batch + b * n_heads * p_seq_len;
+    float* s_key_cache = s_key_cache_batch + b * n_layers * p_seq_len * kv_dim;
+
     float score = 0.0f;
-    float* q = s_q_batch + b * dim + h * head_size;
-    float* k = s_key_cache_batch + b * n_layers * p_seq_len * kv_dim + loff + t * kv_dim + (h / kv_mul) * head_size;
-    float* att = s_att_batch + b * n_heads * p_seq_len + h * p_seq_len;
+    float* q = s_q + h * head_size;
+    float* k = s_key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+    float* att = s_att + h * p_seq_len;
     for(int i=lx ; i<head_size ; i+=blockDim.x)
     {
         score += q[i] * k[i];
@@ -114,6 +112,7 @@ thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int n_bat
 
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
 
+
     dim3 blockDim(MAX_BLOCK_SIZE);
     dim3 gridDim(total_poses * n_heads);
     // CAUTION: careful playing with [pos]. 
@@ -129,7 +128,7 @@ __global__ void thaDNN_s_rmsnorm_kernel_v2_batch(int n_batches, float* o_batch, 
     int b = blockIdx.x;
     float tmp;
     float ss = 0.0;
-
+    
     float* x = x_batch + b * dim;
     float* o = o_batch + b * dim;
     __shared__ float total_sum;
@@ -140,12 +139,13 @@ __global__ void thaDNN_s_rmsnorm_kernel_v2_batch(int n_batches, float* o_batch, 
     }
 
     ss = block_reduce_sum(ss);
-
+    
     if (lx == 0)
     {
         ss /= size;
         ss += 1e-5f;
-        total_sum = 1.0f / sqrtf(ss);
+        ss = 1.0f / sqrtf(ss);
+        total_sum = ss;
     }
     __syncthreads();
 
@@ -167,7 +167,7 @@ thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t handle, int n_batches,
     dim3 blockDim(1024);
     dim3 gridDim(n_batches);
     hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel_v2_batch, gridDim, blockDim, 0, 0, n_batches, o_batch, x_batch, weight, size, dim);
-
+    
     // CHECK_HIP(hipGetLastError());
     return THABLAS_STATUS_SUCCESS;
 }
@@ -180,14 +180,15 @@ __global__ void thaDNN_s_multiheads_2_batch_kernel(int n_batches, float* s_att_b
     int h = blockIdx.x;
     int b = blockIdx.y;
 
-    float* x = s_att_batch + b * n_heads * seq_len + h * seq_len;
+    float* s_att = s_att_batch + b * n_heads * seq_len;
+    float* x = s_att + h * seq_len;
     int size = size_batch[b] + 1;
 
     float private_max_val = -3.402e+38;
     __shared__ float max_val;
     for (int i=lx ; i<size ; i+=bDim)
     {
-        private_max_val = maxf(private_max_val, x[i]);
+        private_max_val = std::max(private_max_val, x[i]);
     }
 
     private_max_val = block_reduce_max(private_max_val);
@@ -197,7 +198,7 @@ __global__ void thaDNN_s_multiheads_2_batch_kernel(int n_batches, float* s_att_b
     }
     __syncthreads();
     private_max_val = max_val;
-
+    
     float private_sum = 0.0f, tmp;
     __shared__ float sum;
     for (int i =lx; i<size ; i+=bDim) {
@@ -231,7 +232,7 @@ thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batche
     // }
 
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-
+    
     dim3 blockDim(1024);
     dim3 gridDim(n_heads, n_batches);
 
@@ -289,12 +290,16 @@ __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, fl
     int b = blockIdx.z;
 
     float sum = 0.0f;
-    float *v, *xb;
+    float *att, *v, *xb;
     int pos_b = pos[b];
     for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
     {
+        att = s_att_batch + h * seq_len + b * n_heads *  seq_len;
+        float a = att[t];
+
         v = s_value_cache_batch + loff + t * kv_dim + (h / kv_mul) * head_size + b * n_layers * seq_len * kv_dim;
-        sum += *(s_att_batch + h * seq_len + b * n_heads *  seq_len + t) * v[i];
+
+        sum += a * v[i];
     }
     sum = block_reduce_sum(sum);
     if (lx == 0)
