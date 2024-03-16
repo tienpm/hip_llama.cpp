@@ -355,4 +355,79 @@ void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int n_b
   CHECK_HIP(hipMalloc(&s_d_batch->value_cache, n_layers * seq_len * kv_dim * sizeof(float) * n_batches));
 }
 
+void copy_transformer_pipeline_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id)
+{
+  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+  Config *p = &t_h->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+
+  t_d = (Transformer*)malloc(sizeof(Transformer));
+  // Config config; // the hyperparameters of the architecture (the blueprint)
+  // TransformerWeights weights; // the weights of the model
+  // RunState state; // buffers for the "wave" of activations in the forward pass
+  // // some more state needed to properly clean up the memory mapping (sigh)
+  // int fd; // file descriptor for memory mapping
+  // float* data; // memory mapped data pointer
+  // ssize_t file_size; // size of the checkpoint file in bytes
+  memcpy(&t_d->config, p, sizeof(Config));
+
+  CHECK_HIP(hipMalloc(&t_d->weights.token_embedding_table, vocab_size * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.rms_att_weight, pipe_size * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.rms_ffn_weight, pipe_size * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.wq, pipe_size * dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.wk, pipe_size * dim * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.wv, pipe_size * dim * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.wo, pipe_size * dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.w1, pipe_size * hidden_dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.w2, pipe_size * dim * hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.w3, pipe_size * hidden_dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.rms_final_weight, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->weights.wcls, dim * vocab_size * sizeof(float)));  
+
+  int poff = pipe_id * pipe_size;
+  CHECK_HIP(hipMemcpy(t_d->weights.token_embedding_table, t_h->weights.token_embedding_table, vocab_size * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.rms_att_weight,        t_h->weights.rms_att_weight + poff * dim,  pipe_size * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.rms_ffn_weight,        t_h->weights.rms_ffn_weight + poff * dim,  pipe_size * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.wq,                    t_h->weights.wq + poff * dim * dim,        pipe_size * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.wk,                    t_h->weights.wk + poff * dim * kv_dim,     pipe_size * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.wv,                    t_h->weights.wv + poff * dim * kv_dim,     pipe_size * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.wo,                    t_h->weights.wo + poff * dim * dim,        pipe_size * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.w1,                    t_h->weights.w1 + poff * hidden_dim * dim, pipe_size * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.w2,                    t_h->weights.w2 + poff * dim * hidden_dim, pipe_size * dim * hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.w3,                    t_h->weights.w3 + poff * hidden_dim * dim, pipe_size * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.rms_final_weight, t_h->weights.rms_final_weight, dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(t_d->weights.wcls, t_h->weights.wcls, dim * vocab_size * sizeof(float), hipMemcpyHostToDevice));
+
+  CHECK_HIP(hipMalloc(&t_d->state.x, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.xb, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.xb2, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.hb, hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.hb2, hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.q, dim * sizeof(float)));
+  // CHECK_HIP(hipMalloc(&t_d->state.k, dim * sizeof(float)));
+  // CHECK_HIP(hipMalloc(&t_d->state.v, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.att, n_heads * seq_len * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.logits, vocab_size * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.key_cache, pipe_size * seq_len * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&t_d->state.value_cache, pipe_size * seq_len * kv_dim * sizeof(float)));
+
+  // CHECK_HIP(hipMemcpy(t_d->state.x, t_h->state.x, dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.xb, t_h->state.xb, dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.xb2, t_h->state.xb2, dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.hb, t_h->state.hb, hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.hb2, t_h->state.hb2, hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.q, t_h->state.q, dim * sizeof(float), hipMemcpyHostToDevice));
+  // // CHECK_HIP(hipMemcpy(t_d->state.k, t_h->state.k, dim * sizeof(float), hipMemcpyHostToDevice));
+  // // CHECK_HIP(hipMemcpy(t_d->state.v, t_h->state.v, dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.att, t_h->state.att, n_heads * seq_len * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.logits, t_h->state.logits, vocab_size * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.key_cache, t_h->state.key_cache, pipe_size * seq_len * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  // CHECK_HIP(hipMemcpy(t_d->state.value_cache, t_h->state.value_cache, pipe_size * seq_len * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+}
+
 void free_transformer_device() {}
