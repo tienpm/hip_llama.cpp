@@ -682,7 +682,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // ----------------------------------------------------------------------------
 // You should parallelize and optimize from this function exploiting multiple GPUs
 //
-int test2(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int n_batches=1) {
+int test_continuous_batching_only(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int n_batches=1) {
 //   // Count the number of the generated tokens
 //   int gen_cnt = 0;
 
