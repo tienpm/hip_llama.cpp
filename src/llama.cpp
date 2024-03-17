@@ -885,7 +885,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 1;
+  batch_size = 16;
   int n_flows = 4;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
@@ -904,11 +904,14 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
   TransformerWeights* w_d[n_devices];
   thablasHandle_t handle[n_devices];
+  #pragma omp parallel for num_threads(n_devices)
   for(int gid=0 ; gid<n_devices ; ++gid) {
     CHECK_HIP(hipSetDevice(gid));
+    fprintf(stderr, "\nInit weights device %d\n", gid);
     device_flow[gid] = 0;
     thablasCreate(&handle[gid]);
     copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, w_d[gid], pipe_size, gid, batch_size);
+    fprintf(stderr, "\nInit done device %d\n", gid);
   }
 
   #pragma omp parallel num_threads(n_flows) 
@@ -941,10 +944,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     float* logits_d[batch_size];
 
     flow_status[fid] = 0;
+    RunState* s_h_batch[n_devices];
     RunState* s_d_batch[n_devices];
     for(int gid=0 ; gid<n_devices ; ++gid) {
       CHECK_HIP(hipSetDevice(gid));
-      alloc_run_state_to_device_batch(handle[gid], transformer, s_d_batch[gid], pipe_size, gid, batch_size);
+      alloc_run_state_to_host_batch(handle[gid], transformer, s_h_batch[gid], pipe_size, gid, batch_size);
+      alloc_run_state_to_device_1_layer_batch(handle[gid], transformer, s_d_batch[gid], batch_size);
     }
 
     Tokenizer private_tokenizer;
@@ -960,6 +965,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
       if (stop) break;
 
       // assgin new request to batch
+      int n_assigned = 0;
       for(int b=0 ; b<batch_size ; ++b) {
         // if there exist next request
         if (indices[b] == -1) {
@@ -993,10 +999,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           is_done[b] = false;
           logits_d[b] = nullptr;
         }
+        if (indices[b] != -1) ++n_assigned;
       }
+      if (n_assigned == 0) break;
 
       // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
-      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
+      tha_status = thaDNN_s_forward_batch_multiple_pipe_line_layer_swap(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, s_h_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
 
       // advance the state machine
       for(int b=0 ; b<batch_size ; ++b) {

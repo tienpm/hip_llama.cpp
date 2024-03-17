@@ -607,4 +607,69 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, R
   CHECK_HIP(hipMalloc(&s_d->value_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
 }
 
+void alloc_run_state_to_host_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_h, int pipe_size, int pipe_id, int batch_size)
+{
+  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+  Config *p = &t_h->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+
+  s_h = (RunState*)malloc(sizeof(RunState));
+  // Config config; // the hyperparameters of the architecture (the blueprint)
+  // TransformerWeights weights; // the weights of the model
+  // RunState state; // buffers for the "wave" of activations in the forward pass
+  // // some more state needed to properly clean up the memory mapping (sigh)
+  // int fd; // file descriptor for memory mapping
+  // float* data; // memory mapped data pointer
+  // ssize_t file_size; // size of the checkpoint file in bytes
+
+  CHECK_HIP(hipHostMalloc(&s_h->x, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->xb, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->xb2, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->hb, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->hb2, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->q, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->att, n_heads * seq_len * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->logits, vocab_size * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->key_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipHostMalloc(&s_h->value_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+}
+
+void alloc_run_state_to_device_1_layer_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int batch_size)
+{
+  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+  Config *p = &t_h->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+  int pipe_size = 1;
+
+  s_d = (RunState*)malloc(sizeof(RunState));
+  // Config config; // the hyperparameters of the architecture (the blueprint)
+  // TransformerWeights weights; // the weights of the model
+  // RunState state; // buffers for the "wave" of activations in the forward pass
+  // // some more state needed to properly clean up the memory mapping (sigh)
+  // int fd; // file descriptor for memory mapping
+  // float* data; // memory mapped data pointer
+  // ssize_t file_size; // size of the checkpoint file in bytes
+
+  CHECK_HIP(hipMalloc(&s_d->x, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->xb, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->xb2, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->hb, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->hb2, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->q, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->att, n_heads * seq_len * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->logits, vocab_size * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->key_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->value_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+}
+
 void free_transformer_device() {}
