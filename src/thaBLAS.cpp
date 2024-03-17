@@ -16,7 +16,8 @@ thablasStatus_t thablasCreate(thablasHandle_t* handle)
     CHECK_HIP(hipGetDevice(&current_gpu_id));
     handle->current_gpu_id = current_gpu_id;
 
-    // CHECK_HIP(hipStreamCreate(&handle->stream_));
+    // CHECK_HIP(hipStreamCreate(&handle->stream_1));
+    // CHECK_HIP(hipStreamCreate(&handle->stream_2));
 
     return THABLAS_STATUS_SUCCESS;
 }
@@ -143,19 +144,19 @@ __global__ void thaBLAS_s_vecaddvec_kernel(float *a, float *b, int size)
         a[i] += b[i];
 }
 
-thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size)
+thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t* handle, float *a, float *b, int size)
 {
-    if (a==nullptr || b==nullptr || size==0)
-    {
-        printf("THABLAS VEC ADD VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
-        return THABLAS_STATUS_ALLOC_FAILED;        
-    }
+    // if (a==nullptr || b==nullptr || size==0)
+    // {
+    //     printf("THABLAS VEC ADD VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+    //     return THABLAS_STATUS_ALLOC_FAILED;        
+    // }
 
-    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((size + 64 - 1) / 64);
     hipLaunchKernelGGL(thaBLAS_s_vecaddvec_kernel, gridDim, blockDim, 0, 0, a, b, size);
-    CHECK_HIP(hipGetLastError());
+    // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
 }
@@ -187,7 +188,7 @@ thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size)
 
     thablasHandle_t handle;
     thablasCreate(&handle);
-    thablasStatus_t status = thaBLAS_s_vecaddvec(handle, a_d, b_d, size);
+    thablasStatus_t status = thaBLAS_s_vecaddvec(&handle, a_d, b_d, size);
     if (status != THABLAS_STATUS_SUCCESS) {
         printf("THABLAS VEC ADD VEC ERROR: ERROR\n"); fflush(stdout);
     }
