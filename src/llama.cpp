@@ -885,8 +885,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 4;
-  int n_flows = 4;
+  batch_size = 1;
+  int n_flows = 1;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
   int n_layers = transformer->config.n_layers;
@@ -902,16 +902,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
   thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
 
-  TransformerWeights* w_d[n_devices];
   thablasHandle_t handle[n_devices];
   #pragma omp parallel for num_threads(n_devices)
   for(int gid=0 ; gid<n_devices ; ++gid) {
-    CHECK_HIP(hipSetDevice(gid));
-    fprintf(stderr, "\nInit weights device %d\n", gid);
     device_flow[gid] = 0;
+    CHECK_HIP(hipSetDevice(gid));
     thablasCreate(&handle[gid]);
-    copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, w_d[gid], pipe_size, gid, batch_size);
-    fprintf(stderr, "\nInit done device %d\n", gid);
   }
 
   #pragma omp parallel num_threads(n_flows) 
@@ -944,13 +940,23 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     float* logits_d[batch_size];
 
     flow_status[fid] = 0;
+    TransformerWeights* w_h[n_devices];
+    TransformerWeights* w_d[n_devices];
+
+
     RunState* s_h_batch[n_devices];
     RunState* s_d_batch[n_devices];
+    fprintf(stderr, "\n--Initiating Flow %d\n", fid);
+    // #pragma omp parallel for num_threads(n_devices)
     for(int gid=0 ; gid<n_devices ; ++gid) {
       CHECK_HIP(hipSetDevice(gid));
+      copy_weight_pipeline_to_host_batch_layer_swap(handle[gid], transformer, w_h[gid], pipe_size, gid, batch_size);
+      copy_transformer_weight_pipeline_to_device_batch_1_layer(handle[gid], transformer, w_d[gid], gid, batch_size);
+      fprintf(stderr, "\n--Init done weight\n");
       alloc_run_state_to_host_batch(handle[gid], transformer, s_h_batch[gid], pipe_size, gid, batch_size);
       alloc_run_state_to_device_1_layer_batch(handle[gid], transformer, s_d_batch[gid], batch_size);
     }
+    fprintf(stderr, "\n--Init done Flow %d\n", fid);
 
     Tokenizer private_tokenizer;
     build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
@@ -1004,7 +1010,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
       if (n_assigned == 0) break;
 
       // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
-      tha_status = thaDNN_s_forward_batch_multiple_pipe_line_layer_swap(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, s_h_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
+      tha_status = thaDNN_s_forward_batch_multiple_pipe_line_layer_swap_v2(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, w_h, s_d_batch, s_h_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
 
       // advance the state machine
       for(int b=0 ; b<batch_size ; ++b) {
@@ -1026,8 +1032,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
             char* piece = decode(&private_tokenizer, token[b], next[b]);
             append_str(piece, gen_str[b]);
             token[b] = next[b];
-            // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-            // fflush(stdout);
+            safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+            fflush(stdout);
             // fprintf(stderr, "%d %s\n", pos[b], piece);
             ++pos[b];
             if (pos[b] >= steps[b]) {

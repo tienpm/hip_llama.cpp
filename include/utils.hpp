@@ -73,3 +73,8 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, R
 void alloc_run_state_to_host_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_h, int pipe_size, int pipe_id, int batch_size);
 
 void alloc_run_state_to_device_1_layer_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int batch_size);
+
+void copy_transformer_weight_pipeline_to_device_batch_1_layer(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_id, int batch_size);
+
+void copy_weight_pipeline_to_host_batch_layer_swap(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_h, int pipe_size, int pipe_id, int batch_size);
+

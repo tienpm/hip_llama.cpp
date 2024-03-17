@@ -97,3 +97,5 @@ thablasStatus_t thaDNN_s_forward_batch_pipe_line(thablasHandle_t handle[], int n
 thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle[], int flow_id, int n_flows, int n_devices, int batch_size, Config* p, TransformerWeights* w[], RunState* s_batch[], int token[], int pos[], float* logits_host, int* flow_status, int* device_flow, std::mutex *device_mtx);
 
 thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_layer_swap(thablasHandle_t handle[], int fid, int n_flows, int n_devices, int batch_size, Config* p, TransformerWeights* w[], RunState* s_d_batch[], RunState* s_h_batch[], int token[], int pos[], float* logits_host, int* flow_status, int* device_flow, std::mutex *device_mtx);
+
+thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_layer_swap_v2(thablasHandle_t handle[], int fid, int n_flows, int n_devices, int batch_size, Config* p, TransformerWeights* w_d[], TransformerWeights* w_h[], RunState* s_d_batch[], RunState* s_h_batch[], int token[], int pos[], float* logits_host, int* flow_status, int* device_flow, std::mutex *device_mtx);
