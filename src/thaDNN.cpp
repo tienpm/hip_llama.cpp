@@ -10,6 +10,10 @@
 #define WARP_SIZE 64
 // size = 1 -> 16384
 #define RMS_LOCAL_BANK_SIZE 8
+
+const int TILE_SIZE = 4; // batch >= TILE_SIZE*VECTOR_SIZE
+const int VECTOR_SIZE = 4;  // TILE_SIZE >= VECTOR_SIZE
+
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
 {
     int j = threadIdx.x;
@@ -1122,6 +1126,244 @@ thablasStatus_t thaDNN_h2d_s_rmsnorm_v3(float* o, float* x, float* weight, int s
 
     return THABLAS_STATUS_SUCCESS;
 }
+
+
+/*
+***************************************************************************************************************************
+* matrixmulmatrix
+***************************************************************************************************************************
+*/
+
+// -------------------------------------------------- matmul prefetch  -------------------------------------
+
+template <typename T> __global__ void matmul_prefetch(T *A, T *B, T *C, int M, int K, int N) {
+  /* Prefetching method.
+   * Perform outer product of Asub and Bsub.
+   * Specifically:
+   *   Asub: TILE_SIZE * TILE_SIZE
+   *   Bsub: TILE_SIZE * (TILE_SIZE * VECTOR_SIZE)
+   *
+   * Before calculating the submatrix, load the next TILE * TILE
+   * submatrix of A into register.
+   *
+   * After calculating, just swap the pointer to exchange the submatrix.
+   */
+  int bx = blockIdx.x, by = blockIdx.y;
+  int tx = threadIdx.x, ty = threadIdx.y;
+
+  // Allocate As and next_As as column-major array
+  __shared__ T As[TILE_SIZE * TILE_SIZE];
+  __shared__ T next_As[TILE_SIZE * TILE_SIZE];
+
+  // Allocate register files for sub-result of C at each thread.
+  T cv[TILE_SIZE] = {0};
+
+  // Iteration parameters is similar with
+  // computational optimization method.
+  int aBegin = K * TILE_SIZE * by;
+  int aEnd = aBegin + K - 1;
+  int aStep = TILE_SIZE;
+
+  int bBegin = TILE_SIZE * VECTOR_SIZE * bx;
+  int bStep = TILE_SIZE * N;
+
+  int t = VECTOR_SIZE;
+  T *cur = As;
+  T *nxt = next_As;
+  for (int i = 0; i < TILE_SIZE / VECTOR_SIZE; ++i) {
+    cur[(i * t + ty) + TILE_SIZE * tx] = A[aBegin + K * (i * t + ty) + tx];
+  }
+  __syncthreads();
+
+  for (int a = aBegin, b = bBegin; a <= aEnd; a += aStep, b += bStep) {
+    // Load the next submatrix to another register files.
+    // Should check the out-of-range indexing to avoid kernel crash.
+    if (a + aStep <= aEnd) {
+      for (int i = 0; i < TILE_SIZE / VECTOR_SIZE; ++i) {
+        nxt[(i * t) + ty + TILE_SIZE * tx] = A[a + K * (i * t + ty) + tx + aStep];
+      }
+    }
+    T *ap = cur;
+    T *bp = &B[b + TILE_SIZE * ty + tx];
+
+    for (int i = 0; i < TILE_SIZE; ++i) {
+      T bv = *bp;
+      for (int j = 0; j < TILE_SIZE; ++j) {
+        cv[j] += ap[j] * bv;
+      }
+      ap += TILE_SIZE;
+      bp += N;
+    }
+    __syncthreads();
+
+    // Swap current submatrix and next submatrix.
+    // Note that you can't directly assign nxt to cur, which
+    // will change cur and nxt simultaneously at the next loop.
+    T *tmp = cur;
+    cur = nxt;
+    nxt = tmp;
+  }
+
+  int c = N * TILE_SIZE * by + TILE_SIZE * VECTOR_SIZE * bx;
+  c += TILE_SIZE * ty + tx;
+  for (int i = 0; i < TILE_SIZE; ++i) {
+    C[c] = cv[i];
+    c += N;
+  }
+}
+
+// '_s_' = single persion (float)
+// input: A, B, C allocated on device
+// input: M: 1 -> 32000, K: 1 -> 8192, N: 1 -> 32
+
+thablasStatus_t thaDNN_s_matmul_prefetch(thablasHandle_t handle, float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 threads_prefetch(TILE_SIZE, VECTOR_SIZE);
+    dim3 grid_prefetch(N / (TILE_SIZE * VECTOR_SIZE), M / TILE_SIZE);
+    matmul_prefetch<float><<<grid_prefetch, threads_prefetch>>>(A, B, C, M, K, N);
+
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// '_h2d_ = host to device
+// A, B, C allocated on Host
+// only run on 1 devices
+// input: M: 1 -> 32000, K: 1 -> 8192, N: 1 -> 32
+
+thablasStatus_t thaDNN_h2d_s_matmul_prefetch(float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS MATMUL ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *A_d, *B_d, *C_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&A_d, M * K * sizeof(float)));
+    CHECK_HIP(hipMalloc(&B_d, K * N * sizeof(float)));
+    CHECK_HIP(hipMalloc(&C_d, M * N * sizeof(float));
+
+    CHECK_HIP(hipMemcpy(A_d, A, M * K * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(B_d, B, K * N * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_matmul_prefetch(handle, A_d, B_d, C_d, M, K, N);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS MATMUL ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(C, C_d, M * N * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(A_d));
+    CHECK_HIP(hipFree(B_d));
+    CHECK_HIP(hipFree(C_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// -------------------------------------------------- matmul rocblas  -------------------------------------
+thablasStatus_t thaDNN_s_matmul_rocblas(thablasHandle_t handle, float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    float alpha = 1.0;
+    float beta = 0.0;
+    hipblasHandle_t blas_handle;
+    hipblasCreate(&blas_handle);
+    rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, d_B, N, d_A, K, &beta, d_D, N);
+
+    CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
+// '_h2d_ = host to device
+// A, B, C allocated on Host
+// only run on 1 devices
+// input: M: 1 -> 32000, K: 1 -> 8192, N: 1 -> 32
+thablasStatus_t thaDNN_h2d_s_matmul_rocblas(float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS MATMUL ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *A_d, *B_d, *C_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&A_d, M * K * sizeof(float));
+    CHECK_HIP(hipMalloc(&B_d, K * N * sizeof(float));
+    CHECK_HIP(hipMalloc(&C_d, M * N * sizeof(float));
+
+    CHECK_HIP(hipMemcpy(A_d, A, M * K * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(B_d, B, K * N * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_matmul_rocblas(handle, A_d, B_d, C_d, M, K, N);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS MATMUL ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(C, C_d, M * N * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(A_d));
+    CHECK_HIP(hipFree(B_d));
+    CHECK_HIP(hipFree(C_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
+
+
+
+/*
+***************************************************************************************************************************
+* forward
+***************************************************************************************************************************
+*/
 
 thablasStatus_t thaDNN_s_forward(thablasHandle_t handle, Transformer* transformer, int token, int pos, float* &output_logits) {
     // a few convenience variables

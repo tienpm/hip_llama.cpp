@@ -8,11 +8,11 @@
 #include <iostream>
 
 
-int M = 4096;
-int K = 4096;
-int N = 32;  // N >= TILE_SIZE * TILE_SIZE
-const int TILE_SIZE = 8; // TILE_SIZE >= VECTOR_SIZE
-const int VECTOR_SIZE = 4;
+int M = 32000;
+int K = 8192;
+int N = 16;  // N >= TILE_SIZE * TILE_SIZE
+const int TILE_SIZE = 4; // TILE_SIZE >= VECTOR_SIZE
+const int VECTOR_SIZE = 8;
 
 double time_in_ms() {
   return std::chrono::duration<double, std::milli>(
@@ -652,7 +652,8 @@ int main() {
 
   dim3 threads_prefetch(TILE_SIZE, VECTOR_SIZE);
   dim3 grid_prefetch(N / (TILE_SIZE * VECTOR_SIZE), M / TILE_SIZE);
-  matmul_Prefetch<<<grid_prefetch, threads_prefetch>>>(d_A, d_B, d_D, M, K, N);
+  // dim3 grid_prefetch((N + TILE_SIZE * VECTOR_SIZE - 1) / (TILE_SIZE * VECTOR_SIZE), (M + TILE_SIZE - 1) / TILE_SIZE);
+  matmul_Prefetch<float><<<grid_prefetch, threads_prefetch>>>(d_A, d_B, d_D, M, K, N);
   // matmul_Prefetch<float><<<grid_prefetch, threads_prefetch, TILE_SIZE * TILE_SIZE *
   // sizeof(float)>>>(d_A, d_B, d_D, M, K, N, TILE_SIZE, VECTOR_SIZE);
 
@@ -731,29 +732,12 @@ int main() {
 
 
 
-  time = time_in_ms();
-  for (int i = 0; i < 100; i++) {
-    rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, d_B, N,
-                  d_A, K, &beta, d_D, N);
-  }
-  // CHECK_HIP(hipDeviceSynchronize());
-  time = time_in_ms() - time;
-  printf("Time rocblas_sgemm: %f ms\n", time);
-  CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
-  // CHECK_HIP(hipDeviceSynchronize());
-  check_matmul(A, B, D, M, N, K);
-  // reset d_D and D
-  CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
-  zero_mat(D, M, N);
-
 
   time = time_in_ms();
   for (int i = 0; i < 100; i++) {
-    hipLaunchKernelGGL(matmul_CompOpt, dim3(grid_comp), dim3(threads_comp),
-                       (TILE_SIZE * TILE_SIZE + TILE_SIZE) * sizeof(float), 0, d_A, d_B, d_D, M, K,
-                       N);
+    matmul_CompOpt<float><<<grid_comp, threads_comp, 0, 0>>>(d_A, d_B, d_D, M, K, N);
   }
-  // CHECK_HIP(hipDeviceSynchronize());
+  CHECK_HIP(hipStreamSynchronize(0));
   time = time_in_ms() - time;
   printf("Time matmul_CompOpt: %f ms\n", time);
   CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
@@ -765,12 +749,13 @@ int main() {
 
 
 
+
+
   time = time_in_ms();
   for (int i = 0; i < 100; i++) {
-    hipLaunchKernelGGL(matmul_Prefetch, dim3(grid_prefetch), dim3(threads_prefetch),
-                       2 * TILE_SIZE * TILE_SIZE * sizeof(float), 0, d_A, d_B, d_D, M, K, N);
+    matmul_Prefetch<float><<<grid_prefetch, threads_prefetch>>>(d_A, d_B, d_D, M, K, N);
   }
-  // CHECK_HIP(hipDeviceSynchronize());
+  CHECK_HIP(hipStreamSynchronize(0));
   time = time_in_ms() - time;
   printf("Time matmul_Prefetch: %f ms\n", time);
   CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
@@ -780,6 +765,23 @@ int main() {
   CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
   zero_mat(D, M, N);
   
+
+
+
+  time = time_in_ms();
+  for (int i = 0; i < 100; i++) {
+    rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, d_B, N, d_A, K, &beta, d_D, N);
+  }
+  CHECK_HIP(hipStreamSynchronize(0));
+  time = time_in_ms() - time;
+  printf("Time rocblas_sgemm: %f ms\n", time);
+  CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
+  // CHECK_HIP(hipDeviceSynchronize());
+  check_matmul(A, B, D, M, N, K);
+  // reset d_D and D
+  CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
+  zero_mat(D, M, N);
+
 
 
 }
