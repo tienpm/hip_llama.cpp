@@ -51,3 +51,8 @@ build/objects/
 ./.vscode
 /.vscode/*
 /.vscode 
+
+./test/test_xa
+./test/test_xa/*
+./test 
+
