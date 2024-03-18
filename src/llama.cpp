@@ -885,7 +885,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 1;
+  batch_size = 4;
   int n_flows = 4;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
@@ -904,6 +904,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
   TransformerWeights* w_d[n_devices];
   thablasHandle_t handle[n_devices];
+  #pragma omp parallel for num_threads(n_devices)
   for(int gid=0 ; gid<n_devices ; ++gid) {
     CHECK_HIP(hipSetDevice(gid));
     device_flow[gid] = 0;
@@ -942,10 +943,13 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
     flow_status[fid] = 0;
     RunState* s_d_batch[n_devices];
+    fprintf(stderr, "\n--Initiating flow %d\n", fid);
+    #pragma omp parallel for num_threads(n_devices)
     for(int gid=0 ; gid<n_devices ; ++gid) {
       CHECK_HIP(hipSetDevice(gid));
       alloc_run_state_to_device_batch(handle[gid], transformer, s_d_batch[gid], pipe_size, gid, batch_size);
     }
+    fprintf(stderr, "\n--Init done flow %d\n", fid);
 
     Tokenizer private_tokenizer;
     build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);

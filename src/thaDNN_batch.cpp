@@ -96,7 +96,7 @@ __global__ void thaDNN_s_multiheads_1_v2_batch_kernel(int pos[], int n_heads, in
     }
 }
 
-thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int n_batches, int pos[], int pos_d[], int n_heads, int n_layers, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int dim, int kv_mul)
+thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t* handle, int n_batches, int pos[], int pos_d[], int n_heads, int n_layers, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int dim, int kv_mul)
 {
     // if (s_q_batch==nullptr || s_att_batch==nullptr || s_key_cache_batch==nullptr || head_size + seq_len + kv_dim + dim==0)
     // {
@@ -155,7 +155,7 @@ __global__ void thaDNN_s_rmsnorm_kernel_v2_batch(int n_batches, float* o_batch, 
     }
 }
 
-thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t handle, int n_batches, float* o_batch, float* x_batch, float* weight, int size, int dim) 
+thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t* handle, int n_batches, float* o_batch, float* x_batch, float* weight, int size, int dim) 
 {
     // if (size+dim==0 || o_batch == nullptr || x_batch == nullptr || weight == nullptr || handle.current_gpu_id < 0)
     // {
@@ -223,7 +223,7 @@ __global__ void thaDNN_s_multiheads_2_batch_kernel(int n_batches, float* s_att_b
 // _s_ = single persion (float)
 // input: output, x allocated on device
 // input: size = 32000
-thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads)
+thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t* handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads)
 {
     // if (seq_len+n_heads+n_batches==0 || s_att_batch == nullptr || handle.current_gpu_id < 0)
     // {
@@ -244,13 +244,14 @@ thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batche
 __global__ void thaDNN_s_matmulvec_v2_batch_kernel(float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos[], int C_batch_size, int B_batch_size)
 {
     int gx = blockIdx.x;
+    int bdim = blockDim.x;
     int b = blockIdx.y;
     int lx = threadIdx.x;
     float sum = 0.0f;
 
     float *C = C_batch + Coff + has_pos * pos[b] + b * C_batch_size;
     float *B = B_batch + b * B_batch_size;
-    for (int k=lx ; k<K ; k+=blockDim.x)
+    for (int k=lx ; k<K ; k+=bdim)
     {
         sum += A[gx*K + k] * B[k];
     }
@@ -262,7 +263,7 @@ __global__ void thaDNN_s_matmulvec_v2_batch_kernel(float *C_batch, float *B_batc
 }
 
 // A[M,K] x B[K,1] = C[1,M]
-thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size)
+thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t* handle, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size)
 {
     // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
     // {
@@ -280,6 +281,73 @@ thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, int n_batche
     return THABLAS_STATUS_SUCCESS;
 }
 
+// A[M,K] x B[K,1] = C[1,M]
+thablasStatus_t thaDNN_s_matmulvec_v2_batch_stream(hipStream_t* stream_, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size)
+{
+    // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
+    // {
+    //     printf("THABLAS MAT MUL VEC BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+    //     return THABLAS_STATUS_ALLOC_FAILED;        
+    // }
+
+    // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(64);
+    dim3 gridDim(M, n_batches);
+
+    hipLaunchKernelGGL(thaDNN_s_matmulvec_v2_batch_kernel, gridDim, blockDim, 0, *stream_, C_batch, B_batch, A, K, M, Coff, has_pos, pos_d, C_batch_size, B_batch_size);
+    // CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
+// __global__ void thaDNN_s_matmulvec_v2_batch_kernel(float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos[], int C_batch_size, int B_batch_size)
+// {
+//     int gx = blockIdx.x;
+//     int gy = blockIdx.y;
+//     int lx = threadIdx.x % 64;
+//     int ly = threadIdx.x / 64;
+//     int b = gy * 1 + ly;
+//     float sum = 0.0f;
+
+//     extern __shared__ float shared_A[];
+//     for (int k=threadIdx.x ; k<K ; k+=blockDim.x)
+//     {
+//         shared_A[k] = A[gx*K + k];
+//     }
+//     __syncthreads();
+
+//     float *C = C_batch + Coff + has_pos * pos[b] + b * C_batch_size;
+//     float *B = B_batch + b * B_batch_size;
+//     for (int k=lx ; k<K ; k+=64)
+//     {
+//         sum += shared_A[k] * B[k];
+//     }
+//     sum = warp_reduce_sum(sum);
+//     if (lx == 0)
+//     {
+//         C[gx] = sum;
+//     }
+// }
+
+// // A[M,K] x B[K,1] = C[1,M]
+// thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size)
+// {
+//     // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
+//     // {
+//     //     printf("THABLAS MAT MUL VEC BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+//     //     return THABLAS_STATUS_ALLOC_FAILED;        
+//     // }
+
+//     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+//     dim3 blockDim(64 * 1);
+//     dim3 gridDim(M, n_batches / 1);
+
+//     hipLaunchKernelGGL(thaDNN_s_matmulvec_v2_batch_kernel, gridDim, blockDim, K * sizeof(float), 0, C_batch, B_batch, A, K, M, Coff, has_pos, pos_d, C_batch_size, B_batch_size);
+//     // CHECK_HIP(hipGetLastError());
+
+//     return THABLAS_STATUS_SUCCESS;
+// }
 
 __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int kv_mul, int dim, int n_layers)
 {
@@ -309,7 +377,7 @@ __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, fl
     }
 }
 
-thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, int n_batches, int pos_d[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int kv_mul, int dim, int n_layers)
+thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t* handle, int n_batches, int pos_d[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int kv_mul, int dim, int n_layers)
 {
     // if (s_xb_batch==nullptr || s_att_batch==nullptr || s_value_cache_batch==nullptr || head_size==0 || seq_len==0 || kv_dim==0)
     // {

@@ -1,6 +1,8 @@
 #pragma once
 #include <stdlib.h>
 #include <ctype.h>
+#include <map>
+#include <vector>
 
 // ----------------------------------------------------------------------------
 // Transformer model
@@ -51,6 +53,23 @@ typedef struct {
   float* key_cache;   // (layer, seq_len, dim??) -> dim or kv_dim ??
   float* value_cache; // (layer, seq_len, dim??) -> dim or kv_dim ??
 } RunState;
+
+typedef struct {
+  int page_size;
+  int row_size_in_bytes;
+  int n_pages;
+  std::vector<long long> page_keys;
+  std::vector<float*> page_ptr;
+  // int* block_keys;
+  // float** blocks;
+} RunStatePaged;
+
+typedef struct {
+  std::map<long long, float*> table;
+  long long counter;
+  int page_size;
+  int row_size_in_bytes;
+} MemoryManager;
 
 typedef struct {
   Config config; // the hyperparameters of the architecture (the blueprint)
