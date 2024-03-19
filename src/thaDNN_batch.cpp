@@ -121,7 +121,7 @@ thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int batch
     dim3 blockDim(MAX_BLOCK_SIZE);
     dim3 gridDim(total_poses * n_heads);
     // CAUTION: careful playing with [pos]. 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_1_v2_batch_kernel, gridDim, blockDim, 0, 0, pos_d, n_heads, pipe_size, batch_size, s_q_batch, s_att_batch, s_key_cache_batch, head_size, n_words, kv_dim, dim, kv_mul);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_1_v2_batch_kernel, gridDim, blockDim, 0, handle.calc_stream, pos_d, n_heads, pipe_size, batch_size, s_q_batch, s_att_batch, s_key_cache_batch, head_size, n_words, kv_dim, dim, kv_mul);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -171,7 +171,7 @@ thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t handle, int n_batches,
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(1024);
     dim3 gridDim(n_batches);
-    hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel_v2_batch, gridDim, blockDim, 0, 0, n_batches, o_batch, x_batch, weight, size, dim);
+    hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel_v2_batch, gridDim, blockDim, 0, handle.calc_stream, n_batches, o_batch, x_batch, weight, size, dim);
     
     // CHECK_HIP(hipGetLastError());
     return THABLAS_STATUS_SUCCESS;
@@ -241,49 +241,49 @@ thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batche
     dim3 blockDim(1024);
     dim3 gridDim(n_heads, n_batches);
 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_2_batch_kernel, gridDim, blockDim, 0, 0, n_batches, s_att_batch, size_batch, seq_len, n_heads);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_2_batch_kernel, gridDim, blockDim, 0, handle.calc_stream, n_batches, s_att_batch, size_batch, seq_len, n_heads);
     // CHECK_HIP(hipGetLastError());
     return THABLAS_STATUS_SUCCESS;
 }
 
-__global__ void thaDNN_s_matmulvec_v2_batch_kernel(float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos[], int C_batch_size, int B_batch_size)
-{
-    int gx = blockIdx.x;
-    int b = blockIdx.y;
-    int lx = threadIdx.x;
-    float sum = 0.0f;
+// __global__ void thaDNN_s_matmulvec_v2_batch_kernel(float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos[], int C_batch_size, int B_batch_size)
+// {
+//     int gx = blockIdx.x;
+//     int b = blockIdx.y;
+//     int lx = threadIdx.x;
+//     float sum = 0.0f;
 
-    float *C = C_batch + Coff + has_pos * pos[b] + b * C_batch_size;
-    float *B = B_batch + b * B_batch_size;
-    for (int k=lx ; k<K ; k+=blockDim.x)
-    {
-        sum += A[gx*K + k] * B[k];
-    }
-    sum = block_reduce_sum(sum);
-    if (lx == 0)
-    {
-        C[gx] = sum;
-    }
-}
+//     float *C = C_batch + Coff + has_pos * pos[b] + b * C_batch_size;
+//     float *B = B_batch + b * B_batch_size;
+//     for (int k=lx ; k<K ; k+=blockDim.x)
+//     {
+//         sum += A[gx*K + k] * B[k];
+//     }
+//     sum = block_reduce_sum(sum);
+//     if (lx == 0)
+//     {
+//         C[gx] = sum;
+//     }
+// }
 
 // A[M,K] x B[K,1] = C[1,M]
-thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size)
-{
-    // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
-    // {
-    //     printf("THABLAS MAT MUL VEC BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
-    //     return THABLAS_STATUS_ALLOC_FAILED;        
-    // }
+// thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size)
+// {
+//     // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
+//     // {
+//     //     printf("THABLAS MAT MUL VEC BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+//     //     return THABLAS_STATUS_ALLOC_FAILED;        
+//     // }
 
-    // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(MAX_BLOCK_SIZE);
-    dim3 gridDim(M, n_batches);
+//     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+//     dim3 blockDim(MAX_BLOCK_SIZE);
+//     dim3 gridDim(M, n_batches);
 
-    hipLaunchKernelGGL(thaDNN_s_matmulvec_v2_batch_kernel, gridDim, blockDim, 0, 0, C_batch, B_batch, A, K, M, Coff, has_pos, pos_d, C_batch_size, B_batch_size);
-    // CHECK_HIP(hipGetLastError());
+//     hipLaunchKernelGGL(thaDNN_s_matmulvec_v2_batch_kernel, gridDim, blockDim, 0, 0, C_batch, B_batch, A, K, M, Coff, has_pos, pos_d, C_batch_size, B_batch_size);
+//     // CHECK_HIP(hipGetLastError());
 
-    return THABLAS_STATUS_SUCCESS;
-}
+//     return THABLAS_STATUS_SUCCESS;
+// }
 
 
 __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, int batch_size, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int n_words, int kv_dim, int kv_mul, int dim, int pipe_size)
@@ -329,7 +329,7 @@ thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, int batch
     dim3 blockDim(1024);
     dim3 gridDim(head_size, n_heads, batch_size);
     // CAUTION: careful playing with [pos]. 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v2_batch_kernel, gridDim, blockDim, 0, 0, pos_d, n_heads, batch_size, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, n_words, kv_dim, kv_mul, dim, pipe_size);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v2_batch_kernel, gridDim, blockDim, 0, handle.calc_stream, pos_d, n_heads, batch_size, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, n_words, kv_dim, kv_mul, dim, pipe_size);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -413,7 +413,7 @@ thablasStatus_t thaDNN_s_matmul_batch(thablasHandle_t handle, float *A, float *B
     dim3 blockDim(MAX_BLOCK_SIZE);
     dim3 gridDim(M, N);
 
-    hipLaunchKernelGGL(thaDNN_s_matmul_batch_kernel, gridDim, blockDim, 0, 0, A, B, C, M, N ,K);
+    hipLaunchKernelGGL(thaDNN_s_matmul_batch_kernel, gridDim, blockDim, 0, handle.calc_stream, A, B, C, M, N ,K);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

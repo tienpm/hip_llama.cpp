@@ -818,7 +818,7 @@ thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, int dim, int head_size, in
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((dim + 128 - 1) / 128);
-    hipLaunchKernelGGL(thaDNN_s_rope_kernel, gridDim, blockDim, 0, 0, dim, head_size, kv_dim, pos, q, k);
+    hipLaunchKernelGGL(thaDNN_s_rope_kernel, gridDim, blockDim, 0, handle.calc_stream, dim, head_size, kv_dim, pos, q, k);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -905,7 +905,7 @@ thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, i
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((hidden_dim + blockDim.x - 1) / blockDim.x);
-    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, gridDim, blockDim, 0, 0, hb, hb2, hidden_dim);
+    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, gridDim, blockDim, 0, handle.calc_stream, hb, hb2, hidden_dim);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -1799,19 +1799,24 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
             // copy the token embedding into x
             for(int b=0 ; b<batch_size ; ++b) {
                 content_row[b] = w[0]->token_embedding_table + token[b] * dim;
-                CHECK_HIP(hipMemcpy(s_batch[0]->x + b * dim, content_row[b], dim * sizeof(float), hipMemcpyDeviceToDevice));
+                CHECK_HIP(hipMemcpyAsync(s_batch[0]->x + b * dim, content_row[b], dim * sizeof(float), hipMemcpyDeviceToDevice, handle[gid].calc_stream));
             }
         }
 
         int *pos_d;
         int max_pos = pos[0];
         for(int b=1 ; b<batch_size ; ++b) max_pos = std::max(pos[b], max_pos);
-        CHECK_HIP(hipMalloc(&pos_d, batch_size * sizeof(int)));
-        CHECK_HIP(hipMemcpy(pos_d, pos, batch_size * sizeof(int), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMallocAsync(&pos_d, batch_size * sizeof(int), handle[gid].calc_stream));
+        CHECK_HIP(hipMemcpyAsync(pos_d, pos, batch_size * sizeof(int), hipMemcpyHostToDevice, handle[gid].calc_stream));
 
         // forward all the layers
         for(unsigned long long l = 0; l < pipe_size; l++) {
         
+            thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->xb, s_batch[gid]->x, w[gid]->rms_att_weight + l*dim, dim, dim);
+            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wq + l*dim*dim,    s_batch[gid]->xb, s_batch[gid]->q,            dim,    batch_size, dim);
+            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
+            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
+
             float* s_batch_key_layer_cache;
             float* s_batch_value_layer_cache;
             int loff = l * n_cache_words * batch_size * kv_dim;
@@ -1835,25 +1840,21 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
                 CHECK_HIP(hipMemcpyAsync(s_batch_value_layer_cache + cached_words, s_host_batch[gid]->value_cache + host_loff, n_words_to_swap * batch_size * kv_dim * sizeof(float), hipMemcpyHostToDevice, handle[gid].copy_stream));
             }
 
-            thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->xb, s_batch[gid]->x, w[gid]->rms_att_weight + l*dim, dim, dim);
-            // thablas_status = thaDNN_s_matmulvec_v2_batch(handle[gid], batch_size, s_batch[gid]->q, s_batch[gid]->xb, w[gid]->wq + l*dim*dim, dim, dim, 0, 0, pos_d, dim, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wq + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->q,   dim, batch_size, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
-            
+            CHECK_HIP(hipStreamSynchronize(handle[gid].copy_stream));
             for(int b=0 ; b<batch_size ; ++b) {
                 int offset = pos[b] * batch_size * kv_dim + b * kv_dim;
-                CHECK_HIP(hipMemcpyAsync(s_batch_key_layer_cache   + offset, s_batch[gid]->key_matmul   + b * kv_dim, kv_dim * sizeof(float), hipMemcpyDeviceToDevice, handle[gid].copy_stream));
-                CHECK_HIP(hipMemcpyAsync(s_batch_value_layer_cache + offset, s_batch[gid]->value_matmul + b * kv_dim, kv_dim * sizeof(float), hipMemcpyDeviceToDevice, handle[gid].copy_stream));
+                CHECK_HIP(hipMemcpyAsync(s_batch_key_layer_cache   + offset, s_batch[gid]->key_matmul   + b * kv_dim, kv_dim * sizeof(float), hipMemcpyDeviceToDevice, handle[gid].calc_stream));
+                CHECK_HIP(hipMemcpyAsync(s_batch_value_layer_cache + offset, s_batch[gid]->value_matmul + b * kv_dim, kv_dim * sizeof(float), hipMemcpyDeviceToDevice, handle[gid].calc_stream));
                 thablas_status = thaDNN_s_rope(handle[gid], dim, head_size, kv_dim, pos[b], s_batch[gid]->q + b * dim, s_batch_key_layer_cache + offset);
             }
 
             // multi-head attention
-            CHECK_HIP(hipStreamSynchronize(handle[gid].copy_stream));
             int multi_head_n_words = p->seq_len;
             thablas_status = thaDNN_s_multiheads_1_v2_batch(handle[gid], batch_size, pipe_size, pos, pos_d, p->n_heads, s_batch[gid]->q, s_batch[gid]->att, s_batch_key_layer_cache, head_size, multi_head_n_words, kv_dim, dim, kv_mul);
             thablas_status = thaDNN_s_multiheads_2_batch(handle[gid], batch_size, s_batch[gid]->att, pos_d, multi_head_n_words, p->n_heads);
             thablas_status = thaDNN_s_multiheads_3_v2_batch(handle[gid], batch_size, pos_d, p->n_heads, s_batch[gid]->xb, s_batch[gid]->att, s_batch_value_layer_cache, head_size, multi_head_n_words, kv_dim, kv_mul, dim, pipe_size);
+
+            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
 
             // copy data from device to swap memory
             if (max_pos + 1 > n_cache_words) 
@@ -1869,8 +1870,6 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
                 CHECK_HIP(hipMemcpyAsync(s_host_batch[gid]->key_cache + host_loff, s_batch_key_layer_cache + cached_words, n_words_to_swap * batch_size * kv_dim * sizeof(float), hipMemcpyDeviceToHost, handle[gid].copy_stream));
                 CHECK_HIP(hipMemcpyAsync(s_host_batch[gid]->value_cache + host_loff, s_batch_value_layer_cache + cached_words, n_words_to_swap * batch_size * kv_dim * sizeof(float), hipMemcpyDeviceToHost, handle[gid].copy_stream));
             }
-
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
 
             for(int b=0 ; b<batch_size ; ++b)
                 thablas_status = thaBLAS_s_vecaddvec(handle[gid], s_batch[gid]->x + b * dim, s_batch[gid]->xb2 + b * dim, dim);
@@ -1891,12 +1890,13 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
 
         int next_device = gid + 1;
         if (next_device < n_devices) {
-            CHECK_HIP(hipMemcpy(s_batch[next_device]->x, s_batch[gid]->x, batch_size * dim * sizeof(float), hipMemcpyDeviceToDevice));
+            CHECK_HIP(hipMemcpyAsync(s_batch[next_device]->x, s_batch[gid]->x, batch_size * dim * sizeof(float), hipMemcpyDeviceToDevice, handle[gid].calc_stream));
             // CHECK_HIP(hipDeviceSynchronize());
         } else {
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->x, s_batch[gid]->x, w[gid]->rms_final_weight, dim, dim);
             thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, batch_size, dim);
         }
+        CHECK_HIP(hipDeviceSynchronize());
 
         CHECK_HIP(hipFree(pos_d));
         device_mtx[gid].unlock();

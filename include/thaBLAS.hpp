@@ -21,6 +21,7 @@ typedef enum
 typedef struct 
 {
     int current_gpu_id;
+    hipStream_t calc_stream;
     hipStream_t copy_stream;
 } thablasHandle_t;
 
