@@ -1,0 +1,13 @@
+# Perf counters group 1
+pmc : FetchSize SQ_INSTS_VALU WriteSize SQ_INSTS_SALU 
+# Perf metric for memory
+pmc: TCC_MISS_sum, TCC_HIT_sum, SQ_LDS_BANK_CONFLICT, L2CacheHit
+# Perf metric for CU
+pmc: GRBM_GUI_ACTIVE, SQ_WAVES
+# GPU Util
+pmc: VALUBusy, SALUBusy
+# Filter by dispatches range, GPU index and kernel names
+# supported range formats: "3:9", "3:", "3"
+range:
+gpu: 0
+kernel:

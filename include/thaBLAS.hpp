@@ -55,19 +55,17 @@ thablasStatus_t thablasDestroy(thablasHandle_t handle);
     ********************************************************************/
 thablasStatus_t thablas_Svds(thablasHandle_t handle, int n, float* A, float* B, float val);
 
-thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_num_gpus);
+// thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_num_gpus);
 
 thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size);
 
-thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
+// thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
 
 /*
  * ===========================================================================
  *    level 2 BLAS: Matrix - Vector operations
  * ===========================================================================
  */
-
-thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int M);
 
 thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M);
 
@@ -79,32 +77,6 @@ thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B
  * ===========================================================================
  */
 
-/*! @{
-    \brief BLAS Level 3 API
-
-    \details
-        C = A*B
-
-    @param[in]
-    m         [int]
-              number of rows of matrices A and C
-    @param[in]
-    n         [int]
-              number of columns of matrices B and C
-    @param[in]
-    k         [int]
-              number of columns of matrix A and number of rows of matrix B
-    @param[in]
-    A          pointer storing matrix A accessible from CPU.
-    @param[in]
-    B          pointer storing matrix B accessible from CPU.
-    @param[in, out]
-    C          pointer storing matrix C accessible from CPU.
-    @param[in]
-    max_num_gpus maximum number of GPU will be used
-
-    ********************************************************************/
-thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, float* C, int max_num_gpus);
 
 /*! @{
     \brief BLAS Level 3 API
@@ -132,3 +104,16 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
     ********************************************************************/
 thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
 
+// A[M,K] x B[K,1] = C[M,1]
+thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t handle, 
+                                            int n_batches, 
+                                            float *C_batch, 
+                                            float *B_batch, 
+                                            float *A, 
+                                            int K, 
+                                            int M, 
+                                            int Coff, 
+                                            int has_pos, 
+                                            int pos_d[], 
+                                            int C_batch_size, 
+                                            int B_batch_size);
