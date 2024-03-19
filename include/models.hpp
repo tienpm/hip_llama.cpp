@@ -1,6 +1,8 @@
 #pragma once
 #include <stdlib.h>
 #include <ctype.h>
+#include "thaBLAS.hpp"
+#include "hip_helper.hpp"
 
 // ----------------------------------------------------------------------------
 // Transformer model
@@ -61,3 +63,14 @@ typedef struct {
   float* data; // memory mapped data pointer
   ssize_t file_size; // size of the checkpoint file in bytes
 } Transformer;
+
+void set_transformer();
+void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d);
+void copy_weight_to_device(Transformer* t_h, TransformerWeights* &w_d);
+void alloc_state_to_device(Transformer* t_h, RunState* &s_d);
+void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int batch_size);
+void copy_transformer_pipeline_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id);
+void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id, int batch_size);
+void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size);
+void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size);
+void free_transformer_device();
