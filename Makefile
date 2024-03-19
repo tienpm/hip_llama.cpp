@@ -8,6 +8,7 @@ TARGET   := llama
 INCLUDE  := -Iinclude/ -I/opt/rocm/include/hipblas -I/opt/rocm/include/rccl
 SRC      :=                      \
    $(wildcard src/*.cpp)         \
+	 $(wildcard src/thaDNN/*.cpp)  \
 
 OBJECTS  := $(SRC:%.cpp=$(OBJ_DIR)/%.o)
 
