@@ -75,15 +75,18 @@ thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle
 
 thablasStatus_t thaDNN_h2d_s_softmax_v2(float* x, int size);
 
-thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int n_batches, int pos[], int pos_d[], int n_heads, int n_layers, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int dim, int kv_mul);
+thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int batch_size, int pipe_size, int pos[], int pos_d[], int n_heads, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int n_words, int kv_dim, int dim, int kv_mul);
 
 thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t handle, int n_batches, float* o_batch, float* x_batch, float* weight, int size, int dim);
 
 thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads);
 
 thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, int n_batches, float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos_d[], int C_batch_size, int B_batch_size);
+thablasStatus_t thaDNN_s_matmulvec_v2_batch_kv_cache(thablasHandle_t handle, int batch_size, float *C_batch, float *B_batch, float *A, int K, int M, int pos[], int B_batch_size, int pipe_size, int kv_dim, int l);
 
-thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, int n_batches, int pos_d[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int seq_len, int loff, int kv_dim, int kv_mul, int dim, int n_layers);
+thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, int batch_size, int pos_d[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int n_words, int kv_dim, int kv_mul, int dim, int pipe_size);
+
+thablasStatus_t thaDNN_s_matmul_batch(thablasHandle_t handle, float *A, float *B, float *C, int M, int N, int K);
 
 
 // Forward
@@ -94,3 +97,5 @@ thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t 
 thablasStatus_t thaDNN_s_forward_batch_pipe_line(thablasHandle_t handle[], int n_devices, int n_batches, Transformer* transformer_d[], int token[], int pos[], float* logits_host);
 
 thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle[], int flow_id, int n_flows, int n_devices, int batch_size, Config* p, TransformerWeights* w[], RunState* s_batch[], int token[], int pos[], float* logits_host, int* flow_status, int* device_flow, std::mutex *device_mtx);
+
+thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHandle_t handle[], int fid, int n_flows, int n_devices, int batch_size, int n_cache_words, Config* p, TransformerWeights* w[], RunState* s_batch[], RunState* s_host_batch[], int token[], int pos[], float* logits_host, int* flow_status, int* device_flow, std::mutex *device_mtx);

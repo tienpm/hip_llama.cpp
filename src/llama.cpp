@@ -885,8 +885,10 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 1;
+  batch_size = 16;
   int n_flows = 4;
+  int n_cache_words = 1024;
+  // transformer->config.seq_len = 128;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
   int n_layers = transformer->config.n_layers;
@@ -904,6 +906,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
   TransformerWeights* w_d[n_devices];
   thablasHandle_t handle[n_devices];
+  #pragma omp parallel for num_threads(n_devices)
   for(int gid=0 ; gid<n_devices ; ++gid) {
     CHECK_HIP(hipSetDevice(gid));
     device_flow[gid] = 0;
@@ -942,9 +945,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
     flow_status[fid] = 0;
     RunState* s_d_batch[n_devices];
+    RunState* s_h_batch[n_devices];
+    #pragma omp parallel for num_threads(n_devices)
     for(int gid=0 ; gid<n_devices ; ++gid) {
       CHECK_HIP(hipSetDevice(gid));
-      alloc_run_state_to_device_batch(handle[gid], transformer, s_d_batch[gid], pipe_size, gid, batch_size);
+      alloc_swap_run_state_on_host_batch(handle[gid], transformer, s_h_batch[gid], pipe_size, gid, batch_size, n_cache_words);
+      alloc_cache_run_state_to_device_batch(handle[gid], transformer, s_d_batch[gid], pipe_size, gid, batch_size, n_cache_words);
     }
 
     Tokenizer private_tokenizer;
@@ -989,14 +995,15 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
           token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
           pos[b] = 0; // position in the sequence
-          steps[b] = requests->max_seq_len; // max sequence length
+          steps[b] = transformer->config.seq_len; // max sequence length
+          // steps[b] = n_cache_words;
           is_done[b] = false;
           logits_d[b] = nullptr;
         }
       }
 
       // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
-      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
+      tha_status = thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(handle, fid, n_flows, n_devices, batch_size, n_cache_words, &transformer->config, w_d, s_d_batch, s_h_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
 
       // advance the state machine
       for(int b=0 ; b<batch_size ; ++b) {

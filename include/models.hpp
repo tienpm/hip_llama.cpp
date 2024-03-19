@@ -50,6 +50,10 @@ typedef struct {
   // kv cache
   float* key_cache;   // (layer, seq_len, dim??) -> dim or kv_dim ??
   float* value_cache; // (layer, seq_len, dim??) -> dim or kv_dim ??
+  float* key_cache_swap;
+  float* value_cache_swap;
+  float* key_matmul;
+  float* value_matmul;
 } RunState;
 
 typedef struct {
