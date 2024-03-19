@@ -808,7 +808,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
       tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
 
       // advance the state machine
-      for(int b=0 ; b<batch_size ; ++b) {
+      for(int b = 0 ; b < batch_size; ++b) {
         if (indices[b] > -1) 
         {
           if (pos[b] < num_prompt_tokens[b] - 1) {

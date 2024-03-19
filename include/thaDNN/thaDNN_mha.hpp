@@ -45,18 +45,3 @@ thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle,
                                                int kv_mul, 
                                                int dim, 
                                                int n_layers);
-
-// A[M,K] x B[K,1] = C[1,M]
-thablasStatus_t thaDNN_s_matmulvec_v2_batch(thablasHandle_t handle, 
-                                            int n_batches, 
-                                            float *C_batch, 
-                                            float *B_batch, 
-                                            float *A, 
-                                            int K, 
-                                            int M, 
-                                            int Coff, 
-                                            int has_pos, 
-                                            int pos_d[], 
-                                            int C_batch_size, 
-                                            int B_batch_size);
-
