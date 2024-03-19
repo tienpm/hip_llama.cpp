@@ -251,3 +251,45 @@ thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B
 
     return THABLAS_STATUS_SUCCESS;
 }
+
+
+// [B and C are col major
+__global__ void thaBLAS_s_matmul_reduction_kernel(float *A, float *B, float *C, int M, int N, int K)
+{
+    int i = blockIdx.x;
+    int j = blockIdx.y;
+    int lx = threadIdx.x;
+    float sum = 0.0f;
+
+    float *Ccol = C + j * M;
+    float *Bcol = B + j * K;
+    for (int k=lx ; k<K ; k+=blockDim.x)
+    {
+        sum += A[i*K + k] * Bcol[k];
+    }
+    sum = block_reduce_sum(sum);
+    if (lx == 0)
+    {
+        Ccol[i] = sum;
+    }
+}
+
+
+// B and C are col major
+thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, float *A, float *B, float *C, int M, int N, int K)
+{
+    // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
+    // {
+    //     printf("THABLAS MAT MUL VEC BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+    //     return THABLAS_STATUS_ALLOC_FAILED;        
+    // }
+
+    // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 blockDim(MAX_BLOCK_SIZE);
+    dim3 gridDim(M, N);
+
+    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, 0, 0, A, B, C, M, N ,K);
+    // CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}

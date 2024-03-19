@@ -10,7 +10,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <omp.h>
-#include <mutex>
 
 #include <fstream>
 #include <iostream>
@@ -695,19 +694,21 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
   int n_devices = 0;
   batch_size = 1;
-  int n_flows = 4;
+  int n_host_threads = 4;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
   int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
   int pipe_size = n_layers / n_devices;
   
-  std::mutex mtx_idx, mtx_n_done;
+  omp_lock_t device_locks[n_devices];
+  omp_lock_t idx_lock, n_done_lock;
+  omp_init_lock(&idx_lock);
+  omp_init_lock(&n_done_lock);
   int next_idx = 0;
   int n_done = 0;
-  int flow_status[n_flows], device_flow[n_devices];
-  std::mutex device_mtx[n_devices];
-  int gen_cnt_flow[n_flows];
+  int host_thread_status[n_host_threads], device_host_thread[n_devices];
+  int gen_cnt_host_thread[n_host_threads];
 
   thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
 
@@ -715,12 +716,13 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   thablasHandle_t handle[n_devices];
   for(int gid=0 ; gid<n_devices ; ++gid) {
     CHECK_HIP(hipSetDevice(gid));
-    device_flow[gid] = 0;
+    device_host_thread[gid] = 0;
+    omp_init_lock(&device_locks[gid]);
     thablasCreate(&handle[gid]);
     copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, w_d[gid], pipe_size, gid, batch_size);
   }
 
-  #pragma omp parallel num_threads(n_flows) 
+  #pragma omp parallel num_threads(n_host_threads) 
   {
     int fid = omp_get_thread_num();
     cpu_set_t cpu_set;
@@ -749,7 +751,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     bool is_done[batch_size];
     float* logits_d[batch_size];
 
-    flow_status[fid] = 0;
+    host_thread_status[fid] = 0;
     RunState* s_d_batch[n_devices];
     for(int gid=0 ; gid<n_devices ; ++gid) {
       CHECK_HIP(hipSetDevice(gid));
@@ -758,24 +760,24 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
     Tokenizer private_tokenizer;
     build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
-    gen_cnt_flow[fid] = 0;
+    gen_cnt_host_thread[fid] = 0;
 
     while (1) {
       // check for stop condition
       bool stop = false;
-      mtx_n_done.lock();
+      omp_set_lock(&n_done_lock);
       stop = (n_done >= requests->num_reqs);
-      mtx_n_done.unlock();
+      omp_unset_lock(&n_done_lock);
       if (stop) break;
 
       // assgin new request to batch
       for(int b=0 ; b<batch_size ; ++b) {
         // if there exist next request
         if (indices[b] == -1) {
-          mtx_idx.lock();
+          omp_set_lock(&idx_lock);
           indices[b] = next_idx;
           if (next_idx < requests->num_reqs) ++next_idx;
-          mtx_idx.unlock();
+          omp_unset_lock(&idx_lock);
 
           if (indices[b] >= requests->num_reqs)
           {
@@ -805,7 +807,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
       }
 
       // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
-      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
+      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_host_threads, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, host_thread_status, device_host_thread, device_locks);
 
       // advance the state machine
       for(int b = 0 ; b < batch_size; ++b) {
@@ -836,7 +838,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
             }
           }
           // ++gen_cnt;
-          ++gen_cnt_flow[fid];
+          ++gen_cnt_host_thread[fid];
         }
       }
       
@@ -854,23 +856,23 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           pos[b] = 0;
           token[b] = 0;
 
-          mtx_n_done.lock();
+          omp_set_lock(&n_done_lock);
           ++n_done;
-          mtx_n_done.unlock();
+          omp_unset_lock(&n_done_lock);
         }
       }
 
       // if (start == 0) { start = time_in_ms();}
     }
-  } // end flow parallel
+  } // end host_thread parallel
 
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     free_sampler(&samplers[idx]);
   }
 
   gen_cnt = 0;
-  for(int fid = 0; fid < n_flows; ++fid)
-    gen_cnt += gen_cnt_flow[fid];
+  for(int fid = 0; fid < n_host_threads; ++fid)
+    gen_cnt += gen_cnt_host_thread[fid];
   fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
 
   return gen_cnt;

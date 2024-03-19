@@ -5,8 +5,6 @@
 // only arrays are stored on device
 void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d)
 {
-  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-
   Config *p = &t_h->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -179,7 +177,6 @@ void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int bat
 
 void copy_transformer_pipeline_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id)
 {
-  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
   Config *p = &t_h->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -254,7 +251,6 @@ void copy_transformer_pipeline_to_device(thablasHandle_t handle, Transformer* t_
 
 void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id, int batch_size)
 {
-  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
   Config *p = &t_h->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -327,7 +323,6 @@ void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transform
 
 void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size)
 {
-  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
   Config *p = &t_h->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -375,7 +370,6 @@ void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Tr
 
 void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size)
 {
-  CHECK_HIP(hipSetDevice(handle.current_gpu_id));
   Config *p = &t_h->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -403,6 +397,8 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, R
   CHECK_HIP(hipMalloc(&s_d->logits, vocab_size * sizeof(float) * batch_size));
   CHECK_HIP(hipMalloc(&s_d->key_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
   CHECK_HIP(hipMalloc(&s_d->value_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->key_matmul, kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&s_d->value_matmul, kv_dim * sizeof(float) * batch_size));
 }
 
 void free_transformer_device() {}
