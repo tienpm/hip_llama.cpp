@@ -2,6 +2,7 @@
 #include "hip_helper.hpp"
 
 #include <hip/hip_runtime.h>
+#include <rocblas/rocblas.h>
 #include <omp.h>
 #include <hipblas.h>
 
@@ -213,11 +214,6 @@ thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t handle, int n_batches, fl
  * ===========================================================================
  */
 
-// thablasStatus_t thaBLAS_h2d_s_matmulvec(float *C, float *B, float *A, int K, int M)
-// {
-//     return thaBLAS_h2d_s_matmul(M, 1, K, A, B, C);
-// }
-
 thablasStatus_t thaBLAS_s_matmulvec(thablasHandle_t handle, float *C, float *B, float *A, int K, int M) {
     return thaBLAS_s_matmul(handle, M, 1, K, A, B, C);
 }
@@ -290,6 +286,40 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, float *A, flo
 
     hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, 0, 0, A, B, C, M, N ,K);
     // CHECK_HIP(hipGetLastError());
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+__global__ void thaBLAS_s_sgemm_16x16x4_kernel(const float *A, const float *B, float *D)
+{
+    const int M = 16;
+    const int N = 16;
+    const int K = 4;
+
+    using float4 = __attribute__( (__vector_size__(4 * sizeof(float)) )) float;
+    float4 dmn = {0};
+
+    int mk = threadIdx.y + K * threadIdx.x;
+    int kn = threadIdx.x + N * threadIdx.y;
+
+    float amk = A[mk];
+    float bkn = B[kn];
+    dmn = __builtin_amdgcn_mfma_f32_16x16x4f32(amk, bkn, dmn, 0, 0, 0);
+
+    for (int i = 0; i < 4; ++i) 
+    {
+        const int idx = threadIdx.x + i * N + threadIdx.y * 4 * N;
+        printf("id:%d\n", idx);
+        D[idx] = dmn[i];
+    }
+}
+
+thablasStatus_t thaBLAS_s_sgemm_16x16x4(thablasHandle_t handle, float *d_A, float *d_B, float *d_D, int M, int N, int K)
+{
+    dim3 blockDim(16, 4, 1);
+    dim3 gridDim(1, 1, 1);
+    
+    hipLaunchKernelGGL(thaBLAS_s_sgemm_16x16x4_kernel, gridDim, blockDim, 0, 0, d_A, d_B, d_D);
 
     return THABLAS_STATUS_SUCCESS;
 }
