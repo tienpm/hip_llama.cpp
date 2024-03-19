@@ -117,3 +117,11 @@ thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t handle,
                                             int pos_d[], 
                                             int C_batch_size, 
                                             int B_batch_size);
+
+thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, 
+                                            float *A, 
+                                            float *B, 
+                                            float *C, 
+                                            int M, 
+                                            int N, 
+                                            int K);

@@ -7,7 +7,7 @@
 #include "thaDNN/thaDNN_softmax.hpp"
 #include "thaDNN/thaDNN_swiglu.hpp"
 
-#include <mutex>
+#include <omp.h>
 
 /*! @enum thaDNNStatus_t
  * Error codes that are returned by all MIOpen API calls.
@@ -70,4 +70,4 @@ thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t 
 
 thablasStatus_t thaDNN_s_forward_batch_pipe_line(thablasHandle_t handle[], int n_devices, int n_batches, Transformer* transformer_d[], int token[], int pos[], float* logits_host);
 
-thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle[], int flow_id, int n_flows, int n_devices, int batch_size, Config* p, TransformerWeights* w[], RunState* s_batch[], int token[], int pos[], float* logits_host, int* flow_status, int* device_flow, std::mutex *device_mtx);
+thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle[], int host_thread_id, int n_host_threads, int n_devices, int batch_size, Config* p, TransformerWeights* w[], RunState* s_batch[], int token[], int pos[], float* logits_host, int* host_thread_status, int* device_host_thread, omp_lock_t *device_mtx);
