@@ -10,9 +10,9 @@
 
 int M = 32000;
 int K = 8192;
-int N = 16;  // N >= TILE_SIZE * TILE_SIZE
-const int TILE_SIZE = 4; // TILE_SIZE >= VECTOR_SIZE
-const int VECTOR_SIZE = 8;
+int N = 128;  // N >= TILE_SIZE * TILE_SIZE
+const int TILE_SIZE = 32; // TILE_SIZE >= VECTOR_SIZE
+const int VECTOR_SIZE = 4;
 
 double time_in_ms() {
   return std::chrono::duration<double, std::milli>(
@@ -184,6 +184,10 @@ __global__ void sgemm_32x32x2(const float *A, const float *B, float *D, int M, i
     }
   }
 }
+
+
+
+// ----------------------------------------- 10_kernel_warptiling -----------------------------------------
 
 // Define this if not already defined
 #define HIP_ASSERT(x) (assert((x) == hipSuccess))
@@ -372,8 +376,7 @@ void hip_sgemm_wt(int M, int N, int K, float alpha, float *A, float *B, float be
   return;
 }
 
-// ----------------------------------------- matmul comp opt
-// -----------------------------------------
+// -------------------------------- matmul comp opt -----------------------------------------
 template <typename T>
 // __global__ void matmul_CompOpt(T *A, T *B, T *C, int M, int K, int N, const int TILE_SIZE, const
 // int VECTOR_SIZE) {
@@ -567,11 +570,16 @@ int main() {
   // int M = 4096;
   // int K = 4096;
   // int N = 32;
+
+
+  float alpha = 1.0;
+  float beta = 0.0;
+  
   printf("------------------------------------------------------------\n");
   printf("M = %d, K = %d, N = %d\n", M, K, N);
   
-  float alpha = 1.0;
-  float beta = 0.0;
+
+
   rocblas_handle handle;
   rocblas_create_handle(&handle);
 
@@ -621,7 +629,7 @@ int main() {
 
 
   /*
-   * 16X16X4 KERNEL
+   * 16X16X4 LARGE KERNEL
    */
 
   // dim3 block_16(16, 4, 1);
@@ -640,22 +648,20 @@ int main() {
    * COMP OPT KERNEL
    */
 
-  dim3 threads_comp(TILE_SIZE, VECTOR_SIZE);
-  dim3 grid_comp(N / (TILE_SIZE * VECTOR_SIZE), M / TILE_SIZE);
-  matmul_CompOpt<float><<<grid_comp, threads_comp, 0, 0>>>(d_A, d_B, d_D, M, K, N);
-  // matmul_CompOpt<<<grid_comp, threads_comp, (TILE_SIZE * TILE_SIZE + TILE_SIZE) *
-  // sizeof(float)>>>(d_A, d_B, d_D, M, K, N, TILE_SIZE, VECTOR_SIZE);
+  // dim3 threads_comp(TILE_SIZE, VECTOR_SIZE);
+  // dim3 grid_comp(N / (TILE_SIZE * VECTOR_SIZE), M / TILE_SIZE);
+  // matmul_CompOpt<float><<<grid_comp, threads_comp, 0, 0>>>(d_A, d_B, d_D, M, K, N);
+
 
   /*
-   * Prefetch KERNEL
-   */
+  * Prefetch KERNEL
+  */
 
   dim3 threads_prefetch(TILE_SIZE, VECTOR_SIZE);
   dim3 grid_prefetch(N / (TILE_SIZE * VECTOR_SIZE), M / TILE_SIZE);
   // dim3 grid_prefetch((N + TILE_SIZE * VECTOR_SIZE - 1) / (TILE_SIZE * VECTOR_SIZE), (M + TILE_SIZE - 1) / TILE_SIZE);
   matmul_Prefetch<float><<<grid_prefetch, threads_prefetch>>>(d_A, d_B, d_D, M, K, N);
-  // matmul_Prefetch<float><<<grid_prefetch, threads_prefetch, TILE_SIZE * TILE_SIZE *
-  // sizeof(float)>>>(d_A, d_B, d_D, M, K, N, TILE_SIZE, VECTOR_SIZE);
+
 
   /*
   * ROCBLAS
@@ -667,17 +673,18 @@ int main() {
   /*
    * NAIVE KERNEL
    */
-  // Khởi tạo kích thước ma trận
-  int numARows = M; // Số hàng của ma trận A
-  int numAColumns = K; // Số cột của ma trận A
-  int numBColumns = N; // Số cột của ma trận B
-  // Khởi tạo cấu trúc grid và block
-  dim3 threadsPerBlock(16, 16);
-  dim3 blocksPerGrid((numBColumns + threadsPerBlock.x - 1) / threadsPerBlock.x,
-                      (numARows + threadsPerBlock.y - 1) / threadsPerBlock.y);
-  // Gọi kernel
-  naive_matrixMultiply<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_D, numARows, numAColumns,
-  numBColumns);
+
+  // // Khởi tạo kích thước ma trận
+  // int numARows = M; // Số hàng của ma trận A
+  // int numAColumns = K; // Số cột của ma trận A
+  // int numBColumns = N; // Số cột của ma trận B
+  // // Khởi tạo cấu trúc grid và block
+  // dim3 threadsPerBlock(16, 16);
+  // dim3 blocksPerGrid((numBColumns + threadsPerBlock.x - 1) / threadsPerBlock.x,
+  //                     (numARows + threadsPerBlock.y - 1) / threadsPerBlock.y);
+  // // Gọi kernel
+  // naive_matrixMultiply<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_D, numARows, numAColumns,
+  // numBColumns);
 
   /*
    * CHECK MAIN AND CACULATE TIME
@@ -730,22 +737,19 @@ int main() {
 
 
 
-
-
-
-  time = time_in_ms();
-  for (int i = 0; i < 100; i++) {
-    matmul_CompOpt<float><<<grid_comp, threads_comp, 0, 0>>>(d_A, d_B, d_D, M, K, N);
-  }
-  CHECK_HIP(hipStreamSynchronize(0));
-  time = time_in_ms() - time;
-  printf("Time matmul_CompOpt: %f ms\n", time);
-  CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
-  // CHECK_HIP(hipDeviceSynchronize());
-  check_matmul(A, B, D, M, N, K);
-  // reset d_D and D
-  CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
-  zero_mat(D, M, N);
+  // time = time_in_ms();
+  // for (int i = 0; i < 100; i++) {
+  //   matmul_CompOpt<float><<<grid_comp, threads_comp, 0, 0>>>(d_A, d_B, d_D, M, K, N);
+  // }
+  // CHECK_HIP(hipStreamSynchronize(0));
+  // time = time_in_ms() - time;
+  // printf("Time matmul_CompOpt: %f ms\n", time);
+  // CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
+  // // CHECK_HIP(hipDeviceSynchronize());
+  // check_matmul(A, B, D, M, N, K);
+  // // reset d_D and D
+  // CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
+  // zero_mat(D, M, N);
 
 
 
@@ -759,7 +763,7 @@ int main() {
   time = time_in_ms() - time;
   printf("Time matmul_Prefetch: %f ms\n", time);
   CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
-  // CHECK_HIP(hipDeviceSynchronize());
+  CHECK_HIP(hipDeviceSynchronize());
   check_matmul(A, B, D, M, N, K);
   // reset d_D and D
   CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
@@ -767,21 +771,26 @@ int main() {
   
 
 
-
   time = time_in_ms();
   for (int i = 0; i < 100; i++) {
-    rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, d_B, N, d_A, K, &beta, d_D, N);
+    // rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, d_B, N, d_A, K, &beta, d_D, N);
+
+    rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, M, N, K, &alpha, d_A, M, d_B, K, &beta, d_D, M);
   }
   CHECK_HIP(hipStreamSynchronize(0));
   time = time_in_ms() - time;
   printf("Time rocblas_sgemm: %f ms\n", time);
   CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
-  // CHECK_HIP(hipDeviceSynchronize());
+  CHECK_HIP(hipDeviceSynchronize());
   check_matmul(A, B, D, M, N, K);
   // reset d_D and D
   CHECK_HIP(hipMemset(d_D, 0, M * N * sizeof(float)));
   zero_mat(D, M, N);
 
+//----------------------------------------------------------------------------------------
 
+  // CHECK_HIP(hipMemcpy(D, d_D, M * N * sizeof(float), hipMemcpyDeviceToHost));
+  // // CHECK_HIP(hipDeviceSynchronize());
+  // check_matmul(A, B, D, M, N, K);
 
 }

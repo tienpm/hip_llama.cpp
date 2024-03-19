@@ -1296,8 +1296,8 @@ thablasStatus_t thaDNN_s_matmul_rocblas(thablasHandle_t handle, float* A, float*
     CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     float alpha = 1.0;
     float beta = 0.0;
-    hipblasHandle_t blas_handle;
-    hipblasCreate(&blas_handle);
+    rocblas_handle rocblas_handle;
+    rocblas_create_handle(&rocblas_handle);
     rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, d_B, N, d_A, K, &beta, d_D, N);
 
     CHECK_HIP(hipGetLastError());

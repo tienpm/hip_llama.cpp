@@ -4,25 +4,34 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <rocblas/rocblas.h>
 
-// include file test_tensor.cpp
-// #include "test_tensor.cpp"
 
 // CHECK_HIP
-#define CHECK_HIP(cmd)                                                          \
-  do {                                                                         \
-    hipError_t e = cmd;                                                        \
-    if (e != hipSuccess) {                                                     \
-      fprintf(stderr, "Failed: %s\nerror: '%s'(%d) at %s:%d\n", #cmd,          \
-              hipGetErrorString(e), e, __FILE__, __LINE__);                    \
-      exit(EXIT_FAILURE);                                                      \
-    }                                                                          \
+#define CHECK_HIP(cmd)                                                                         \
+  do {                                                                                         \
+    hipError_t e = cmd;                                                                        \
+    if (e != hipSuccess) {                                                                     \
+      fprintf(stderr, "Failed: %s\nerror: '%s'(%d) at %s:%d\n", #cmd, hipGetErrorString(e), e, \
+              __FILE__, __LINE__);                                                             \
+      exit(EXIT_FAILURE);                                                                      \
+    }                                                                                          \
   } while (0)
+
+double time_in_ms() {
+  return std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+
 
 // Define this if not already defined
 #ifndef HIP_ASSERT
 #  define HIP_ASSERT(x) (assert((x) == hipSuccess))
 #endif
+// -------------------------------------------------------------------------------------------------------------------------------------------
 
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 const int WARPSIZE = 32;  // warpSize is not constexpr
@@ -56,7 +65,7 @@ namespace wt {
     }
   }
 
-template <const int BM, const int BN, const int BK, const int WM, const int WN, const int WMITER,
+  template <const int BM, const int BN, const int BK, const int WM, const int WN, const int WMITER,
             const int WNITER, const int WSUBM, const int WSUBN, const int TM, const int TN>
   __device__ void processFromSmem(float *regM, float *regN, float *threadResults, const float *As,
                                   const float *Bs, const uint warpRow, const uint warpCol,
@@ -91,7 +100,8 @@ template <const int BM, const int BN, const int BK, const int WM, const int WN, 
       }
     }
   }
-} // namespace wt
+
+}  // namespace wt
 
 /*
  * @tparam BM The threadblock size for M dimension SMEM caching.
@@ -104,27 +114,27 @@ template <const int BM, const int BN, const int BK, const int WM, const int WN, 
  * @tparam TM The per-thread tile size for M dimension.
  * @tparam TN The per-thread tile size for N dimension.
  */
-template <const int BM, const int BN, const int BK, const int WM, const int WN,
-          const int WNITER, const int TM, const int TN, const int NUM_THREADS>
+template <const int BM, const int BN, const int BK, const int WM, const int WN, const int WNITER,
+          const int TM, const int TN, const int NUM_THREADS>
 __global__ void __launch_bounds__(NUM_THREADS)
-    sgemmWarptiling(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+  sgemmWarptiling(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
   const uint cRow = blockIdx.y;
   const uint cCol = blockIdx.x;
 
   // Placement of the warp in the threadblock tile
-  const uint warpIdx = threadIdx.x / WARPSIZE; // the warp this thread is in
+  const uint warpIdx = threadIdx.x / WARPSIZE;  // the warp this thread is in
   const uint warpCol = warpIdx % (BN / WN);
   const uint warpRow = warpIdx / (BN / WN);
 
   // size of the warp subtile
   constexpr uint WMITER = (WM * WN) / (WARPSIZE * TM * TN * WNITER);
-  constexpr uint WSUBM = WM / WMITER; // 64/2=32
-  constexpr uint WSUBN = WN / WNITER; // 32/2=16
+  constexpr uint WSUBM = WM / WMITER;  // 64/2=32
+  constexpr uint WSUBN = WN / WNITER;  // 32/2=16
 
   // Placement of the thread in the warp subtile
-  const uint threadIdxInWarp = threadIdx.x % WARPSIZE;         // [0, 31]
-  const uint threadColInWarp = threadIdxInWarp % (WSUBN / TN); // i%(16/4)
-  const uint threadRowInWarp = threadIdxInWarp / (WSUBN / TN); // i/4
+  const uint threadIdxInWarp = threadIdx.x % WARPSIZE;          // [0, 31]
+  const uint threadColInWarp = threadIdxInWarp % (WSUBN / TN);  // i%(16/4)
+  const uint threadRowInWarp = threadIdxInWarp / (WSUBN / TN);  // i/4
 
   // allocate space for the current blocktile in SMEM
   __shared__ float As[BM * BK];
@@ -153,14 +163,13 @@ __global__ void __launch_bounds__(NUM_THREADS)
 
   // outer-most loop over block tiles
   for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
-    wt::loadFromGmem<BM, BN, BK, rowStrideA, rowStrideB>(
-        N, K, A, B, As, Bs, innerRowA, innerColA, innerRowB, innerColB);
+    wt::loadFromGmem<BM, BN, BK, rowStrideA, rowStrideB>(N, K, A, B, As, Bs, innerRowA, innerColA,
+                                                         innerRowB, innerColB);
     __syncthreads();
-    wt::processFromSmem<BM, BN, BK, WM, WN, WMITER, WNITER, WSUBM, WSUBN, TM,
-                        TN>(regM, regN, threadResults, As, Bs, warpRow, warpCol,
-                            threadRowInWarp, threadColInWarp);
-    A += BK;     // move BK columns to right
-    B += BK * N; // move BK rows down
+    wt::processFromSmem<BM, BN, BK, WM, WN, WMITER, WNITER, WSUBM, WSUBN, TM, TN>(
+        regM, regN, threadResults, As, Bs, warpRow, warpCol, threadRowInWarp, threadColInWarp);
+    A += BK;      // move BK columns to right
+    B += BK * N;  // move BK rows down
     __syncthreads();
   }
 
@@ -173,64 +182,75 @@ __global__ void __launch_bounds__(NUM_THREADS)
         for (uint resIdxN = 0; resIdxN < TN; resIdxN += 4) {
           // load C vector into registers
           float4 tmp = reinterpret_cast<float4 *>(
-              &C_interim[(threadRowInWarp * TM + resIdxM) * N +
-                         threadColInWarp * TN + resIdxN])[0];
+              &C_interim[(threadRowInWarp * TM + resIdxM) * N + threadColInWarp * TN + resIdxN])[0];
           // perform GEMM update in reg
-          const int i = (wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
-                        wSubColIdx * TN + resIdxN;
+          const int i = (wSubRowIdx * TM + resIdxM) * (WNITER * TN) + wSubColIdx * TN + resIdxN;
           tmp.x = alpha * threadResults[i + 0] + beta * tmp.x;
           tmp.y = alpha * threadResults[i + 1] + beta * tmp.y;
           tmp.z = alpha * threadResults[i + 2] + beta * tmp.z;
           tmp.w = alpha * threadResults[i + 3] + beta * tmp.w;
           // write back
           reinterpret_cast<float4 *>(
-              &C_interim[(threadRowInWarp * TM + resIdxM) * N +
-                         threadColInWarp * TN + resIdxN])[0] = tmp;
+              &C_interim[(threadRowInWarp * TM + resIdxM) * N + threadColInWarp * TN + resIdxN])[0]
+              = tmp;
         }
       }
     }
   }
 }
 
-void hip_sgemm_wt(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
-  constexpr int BM = 8;
-  constexpr int BN = 8;
-  constexpr int BK = 8;
-  constexpr int WM = 8;
-  constexpr int WN = 8;
-  constexpr int WNITER = 2;
-  constexpr int TM = 2;
-  constexpr int TN = 2;
-  constexpr int NUM_THREADS = 256;
-// template <const int BM, const int BN, const int BK, const int WM, const int WN,
-//           const int WNITER, const int TM, const int TN, const int NUM_THREADS>
-  sgemmWarptiling<BM, BN, BK, WM, WN, WNITER, TM, TN, NUM_THREADS>
-      <<<dim3(CEIL_DIV(N, BN), CEIL_DIV(M, BM)), NUM_THREADS>>>(M, N, K, alpha, A, B, beta, C);
-  HIP_ASSERT(hipGetLastError());
-  HIP_ASSERT(hipDeviceSynchronize());
 
-  return;
-
+// ------------------------------------------------------------ check ------------------------------------------------------------
+float *alloc_mat(int R, int C) {
+  float *m;
+  CHECK_HIP(hipHostMalloc(&m, sizeof(float) * R * C));
+  return m;
 }
 
+void zero_mat(float *m, int R, int C) { memset(m, 0, sizeof(float) * R * C); }
 
-void matmul(float* hA, float* hB, float* hC, int M, int N, int K)
-         {
-    for (int i = 0; i < M; i++) {
-      for (int j = 0; j < N; j++) {
-        float sum = 0;
-        for (int k = 0; k < K; k++) {
-          sum += hA[i * K + k] * hB[k * N + j];
-        }
-        hC[i * N + j] = sum;
+void check_matmul(float *A, float *B, float *C, int M, int N, int K) {
+  printf("Validating...\n");
+
+  float *C_ans = alloc_mat(M, N);
+  zero_mat(C_ans, M, N);
+
+#pragma omp parallel for num_threads(20)
+  for (int i = 0; i < M; ++i) {
+    for (int k = 0; k < K; ++k) {
+      for (int j = 0; j < N; ++j) {
+        C_ans[i * N + j] += A[i * K + k] * B[k * N + j];
       }
     }
+  }
+
+  bool is_valid = true;
+  int cnt = 0, thr = 4;
+  float eps = 1e-3;
+  for (int i = 0; i < M; ++i) {
+    for (int j = 0; j < N; ++j) {
+      float c = C[i * N + j];
+      float c_ans = C_ans[i * N + j];
+      if (fabsf(c - c_ans) > eps && (c_ans == 0 || fabsf((c - c_ans) / c_ans) > eps)) {
+        ++cnt;
+        if (cnt <= thr) printf("C[%d][%d] : correct_value = %f, your_value = %f\n", i, j, c_ans, c);
+        if (cnt == thr + 1) printf("Too many error, only first %d values are printed.\n", thr);
+        is_valid = false;
+      }
+    }
+  }
+
+  if (is_valid) {
+    printf("Result: VALID\n");
+  } else {
+    printf("Result: INVALID\n");
+  }
 }
 
 int main() {
-  int M = 16;
-  int N = 16;
-  int K = 16;
+  int M = 512;
+  int N = 128;
+  int K = 512;
   float alpha = 1.0;
   float beta = 0.0;
   float *A, *B, *C;
@@ -247,33 +267,102 @@ int main() {
   for (int i = 0; i < K * N; i++) {
     // random value
     hB[i] = (rand() % 100) / 100.0;
-
   }
 
   CHECK_HIP(hipMemcpy(A, hA, M * K * sizeof(float), hipMemcpyHostToDevice));
   CHECK_HIP(hipMemcpy(B, hB, K * N * sizeof(float), hipMemcpyHostToDevice));
+/* constant
+K10_BN % (16 * K10_TN)
+(K10_WM * K10_WN) % (WARPSIZE * K10_TM * K10_TN * K10_WNITER)
+(K10_NUM_THREADS * 4) % K10_BN 
+(K10_BN * K10_BK) % (4 * K10_NUM_THREADS) 
+*/
 
 
+    const uint K10_NUM_THREADS = 128;
+  const uint K10_BN = 64;
+  const uint K10_BM = 512;
+  const uint K10_BK = 16;
+  const uint K10_WN = 64;
+  const uint K10_WM = 128;
+  const uint K10_WNITER = 2;
+  const uint K10_TN = 4;
+  const uint K10_TM = 4;
+  dim3 blockDim(K10_NUM_THREADS);
 
-  hip_sgemm_wt(M, N, K, alpha, A, B, beta, C);
+  constexpr uint NUM_WARPS = K10_NUM_THREADS / 32;
+
+  // warptile in threadblocktile
+  static_assert((K10_BN % K10_WN == 0) and (K10_BM % K10_WM == 0));
+  static_assert((K10_BN / K10_WN) * (K10_BM / K10_WM) == NUM_WARPS);
+
+  // threads in warpsubtile
+  static_assert((K10_WM * K10_WN) % (WARPSIZE * K10_TM * K10_TN * K10_WNITER) ==
+                0);
+  constexpr uint K10_WMITER =
+      (K10_WM * K10_WN) / (32 * K10_TM * K10_TN * K10_WNITER);
+  // warpsubtile in warptile
+  static_assert((K10_WM % K10_WMITER == 0) and (K10_WN % K10_WNITER == 0));
+
+  static_assert((K10_NUM_THREADS * 4) % K10_BK == 0,
+                "NUM_THREADS*4 must be multiple of K9_BK to avoid quantization "
+                "issues during GMEM->SMEM tiling (loading only parts of the "
+                "final row of Bs during each iteraion)");
+  static_assert((K10_NUM_THREADS * 4) % K10_BN == 0,
+                "NUM_THREADS*4 must be multiple of K9_BN to avoid quantization "
+                "issues during GMEM->SMEM tiling (loading only parts of the "
+                "final row of As during each iteration)");
+  static_assert(K10_BN % (16 * K10_TN) == 0,
+                "BN must be a multiple of 16*TN to avoid quantization effects");
+  static_assert(K10_BM % (16 * K10_TM) == 0,
+                "BM must be a multiple of 16*TM to avoid quantization effects");
+  static_assert((K10_BM * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+                "BM*BK must be a multiple of 4*256 to vectorize loads");
+  static_assert((K10_BN * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+                "BN*BK must be a multiple of 4*256 to vectorize loads");
+
+  dim3 gridDim(CEIL_DIV(N, K10_BN), CEIL_DIV(M, K10_BM));
+  sgemmWarptiling<K10_BM, K10_BN, K10_BK, K10_WM, K10_WN, K10_WNITER, K10_TM,
+                  K10_TN, K10_NUM_THREADS>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+
+  // rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, M, N, K, &alpha, d_A, M, d_B, K, &beta, d_D, M);
+
+  rocblas_handle rocblas_handle;
+  rocblas_create_handle(&rocblas_handle);
+  rocblas_sgemm(rocblas_handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, B, N, A, K, &beta, C, N);
 
   float *hC = (float *)malloc(M * N * sizeof(float));
-  CHECK_HIP(hipMemcpy(hC, C, M * N * sizeof(float), hipMemcpyDeviceToHost));
 
-  float *hC_ref = (float *)malloc(M * N * sizeof(float));
-  matmul(hA, hB, hC_ref, M, N, K);
+  double time;
 
-  int errors = 0;
-  int errors_max = 10;
-  float epsilon = 1e-5;
-  for (int i = 0; i < M * N; i++) {
-    if (fabs(hC[i] - hC_ref[i]) > epsilon) {
-      errors++;
-      if (errors < errors_max) {
-        printf("hC[%d] = %f, hC_ref[%d] = %f\n", i, hC[i], i, hC_ref[i]);
-      }
-    }
+  time = time_in_ms();
+  for (int i = 0; i < 1; i++) {
+    rocblas_sgemm(rocblas_handle, rocblas_operation_none, rocblas_operation_none, M, N, K, &alpha, B, N, A, K, &beta, C, N);
   }
+  CHECK_HIP(hipStreamSynchronize(0));
+  time = time_in_ms() - time;
+  printf("Time rocblas_sgemm: %f ms\n", time);
+  CHECK_HIP(hipMemcpy(hC, C, M * N * sizeof(float), hipMemcpyDeviceToHost));
+  CHECK_HIP(hipDeviceSynchronize());
+  check_matmul(hA, hB, hC, M, N, K);
+  // reset hC and C 
+  memset(hC, 0, M * N * sizeof(float));
+  CHECK_HIP(hipMemcpy(C, hC, M * N * sizeof(float), hipMemcpyHostToDevice));
+
+  time = time_in_ms();
+  for (int i = 0; i < 1; i++) {
+    sgemmWarptiling<K10_BM, K10_BN, K10_BK, K10_WM, K10_WN, K10_WNITER, K10_TM,
+                    K10_TN, K10_NUM_THREADS>
+        <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+  }
+  CHECK_HIP(hipStreamSynchronize(0));
+  time = time_in_ms() - time;
+  printf("Time sgemmWarptiling: %f ms\n", time);
+  CHECK_HIP(hipMemcpy(hC, C, M * N * sizeof(float), hipMemcpyDeviceToHost));
+  CHECK_HIP(hipDeviceSynchronize());
+  check_matmul(hA, hB, hC, M, N, K);
+
 
   free(hA);
   free(hB);
