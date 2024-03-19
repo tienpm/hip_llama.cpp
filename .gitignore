@@ -218,3 +218,8 @@ test/raw/*
 ./.vscode
 /.vscode/*
 /.vscode 
+
+./test/test_xa
+./test/test_xa/*
+./test 
+

@@ -885,10 +885,10 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 1;
+  batch_size = 4;
   int n_flows = 1;
-  int n_cache_words = 32;
-  transformer->config.seq_len = 128;
+  int n_cache_words = 1024;
+  // transformer->config.seq_len = 128;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
   int n_layers = transformer->config.n_layers;

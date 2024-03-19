@@ -4,6 +4,7 @@
 #include "seq.hpp"
 
 #include <hip/hip_runtime.h>
+#include <rocblas/rocblas.h>
 #include <omp.h>
 #include <mutex>
 #include <hipblas.h>
@@ -89,6 +90,10 @@ __device__ float block_reduce_max(float val) {
 //   // if (blockIdx.x == 0 && threadIdx.x == 0) max_value_return[0] = max_value;
 //   return max_value;
 // }
+
+const int TILE_SIZE = 8; // batch >= TILE_SIZE*VECTOR_SIZE
+const int VECTOR_SIZE = 4;  // TILE_SIZE >= VECTOR_SIZE
+
 
 __global__ void thaDNN_s_rmsnorm_kernel(float* o, float* x, float* weight, int size)
 {
@@ -1462,8 +1467,256 @@ thablasStatus_t thaDNN_h2d_s_forward(Transformer* transformer, int token, int po
 }
 
 
+/*
+***************************************************************************************************************************
+* matrixmulmatrix
+***************************************************************************************************************************
+*/
+
+// -------------------------------------------------- matmul prefetch  -------------------------------------
+
+template <typename T> __global__ void matmul_prefetch(T *A, T *B, T *C, int M, int K, int N) {
+  /* Prefetching method.
+   * Perform outer product of Asub and Bsub.
+   * Specifically:
+   *   Asub: TILE_SIZE * TILE_SIZE
+   *   Bsub: TILE_SIZE * (TILE_SIZE * VECTOR_SIZE)
+   *
+   * Before calculating the submatrix, load the next TILE * TILE
+   * submatrix of A into register.
+   *
+   * After calculating, just swap the pointer to exchange the submatrix.
+   */
+  int bx = blockIdx.x, by = blockIdx.y;
+  int tx = threadIdx.x, ty = threadIdx.y;
+
+  // Allocate As and next_As as column-major array
+  __shared__ T As[TILE_SIZE * TILE_SIZE];
+  __shared__ T next_As[TILE_SIZE * TILE_SIZE];
+
+  // Allocate register files for sub-result of C at each thread.
+  T cv[TILE_SIZE] = {0};
+
+  // Iteration parameters is similar with
+  // computational optimization method.
+  int aBegin = K * TILE_SIZE * by;
+  int aEnd = aBegin + K - 1;
+  int aStep = TILE_SIZE;
+
+  int bBegin = TILE_SIZE * VECTOR_SIZE * bx;
+  int bStep = TILE_SIZE * N;
+
+  int t = VECTOR_SIZE;
+  T *cur = As;
+  T *nxt = next_As;
+  for (int i = 0; i < TILE_SIZE / VECTOR_SIZE; ++i) {
+    cur[(i * t + ty) + TILE_SIZE * tx] = A[aBegin + K * (i * t + ty) + tx];
+  }
+  __syncthreads();
+
+  for (int a = aBegin, b = bBegin; a <= aEnd; a += aStep, b += bStep) {
+    // Load the next submatrix to another register files.
+    // Should check the out-of-range indexing to avoid kernel crash.
+    if (a + aStep <= aEnd) {
+      for (int i = 0; i < TILE_SIZE / VECTOR_SIZE; ++i) {
+        nxt[(i * t) + ty + TILE_SIZE * tx] = A[a + K * (i * t + ty) + tx + aStep];
+      }
+    }
+    T *ap = cur;
+    T *bp = &B[b + TILE_SIZE * ty + tx];
+
+    for (int i = 0; i < TILE_SIZE; ++i) {
+      T bv = *bp;
+      for (int j = 0; j < TILE_SIZE; ++j) {
+        cv[j] += ap[j] * bv;
+      }
+      ap += TILE_SIZE;
+      bp += N;
+    }
+    __syncthreads();
+
+    // Swap current submatrix and next submatrix.
+    // Note that you can't directly assign nxt to cur, which
+    // will change cur and nxt simultaneously at the next loop.
+    T *tmp = cur;
+    cur = nxt;
+    nxt = tmp;
+  }
+
+  int c = N * TILE_SIZE * by + TILE_SIZE * VECTOR_SIZE * bx;
+  c += TILE_SIZE * ty + tx;
+  for (int i = 0; i < TILE_SIZE; ++i) {
+    C[c] = cv[i];
+    c += N;
+  }
+}
+
+// '_s_' = single persion (float)
+// input: A, B, C allocated on device
+// input: M: 1 -> 32000, K: 1 -> 8192, N: 1 -> 32
+
+thablasStatus_t thaDNN_s_matmul_prefetch(thablasHandle_t handle, float* A, float* B, float* C, int M, int K, int N) 
+{
+    // if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr || handle.current_gpu_id < 0)
+    // {
+    //     printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+    //     return THABLAS_STATUS_ALLOC_FAILED;        
+    // }
+
+    // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    dim3 threads_prefetch(TILE_SIZE, VECTOR_SIZE);
+    dim3 grid_prefetch(N / (TILE_SIZE * VECTOR_SIZE), M / TILE_SIZE);
+    matmul_prefetch<float><<<grid_prefetch, threads_prefetch, 0, handle.calc_stream>>>(A, B, C, M, K, N);
+
+    // CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// '_h2d_ = host to device
+// A, B, C allocated on Host
+// only run on 1 devices
+// input: M: 1 -> 32000, K: 1 -> 8192, N: 1 -> 32
+
+thablasStatus_t thaDNN_h2d_s_matmul_prefetch(float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS MATMUL ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *A_d, *B_d, *C_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&A_d, M * K * sizeof(float)));
+    CHECK_HIP(hipMalloc(&B_d, K * N * sizeof(float)));
+    CHECK_HIP(hipMalloc(&C_d, M * N * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(A_d, A, M * K * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(B_d, B, K * N * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_matmul_prefetch(handle, A_d, B_d, C_d, M, K, N);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS MATMUL ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(C, C_d, M * N * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(A_d));
+    CHECK_HIP(hipFree(B_d));
+    CHECK_HIP(hipFree(C_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+// -------------------------------------------------- matmul rocblas  -------------------------------------
+thablasStatus_t thaDNN_s_matmul_rocblas(thablasHandle_t handle, float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr || handle.current_gpu_id < 0)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    float alpha = 1.0;
+    float beta = 0.0;
+    
+    rocblas_handle blas_handle;
+    rocblas_create_handle(&blas_handle);
+    // rocblas_sgemm(blas_handle, 
+    //                 rocblas_operation_none, 
+    //                 rocblas_operation_none, 
+    //                 N, M, K, 
+    //                 &alpha, B, N, A, K, &beta, C, N);
+    // rocblas_sgemm(blas_handle, 
+    //                 rocblas_operation_none, 
+    //                 rocblas_operation_none, 
+    //                 N, M, K, &alpha, B, N, A, K, &beta, C, N);
+
+    rocblas_sgemm(blas_handle, 
+                    rocblas_operation_none, 
+                    rocblas_operation_none, 
+                    N, M, K, &alpha, B, N, A, K, &beta, C, N);
+
+    // rocblas_sgemm(blas_handle, rocblas_operation_none, rocblas_operation_none, 
+    //                 M, N, K, &alpha, A, M, B, K, &beta, C, M);
+
+    // CHECK_HIP(hipGetLastError());
+    return THABLAS_STATUS_SUCCESS;
+}
 
 
+// '_h2d_ = host to device
+// A, B, C allocated on Host
+// only run on 1 devices
+// input: M: 1 -> 32000, K: 1 -> 8192, N: 1 -> 32
+thablasStatus_t thaDNN_h2d_s_matmul_rocblas(float* A, float* B, float* C, int M, int K, int N) 
+{
+    if (M==0 || K==0 || N==0 || A == nullptr || B == nullptr || C == nullptr)
+    {
+        printf("THABLAS MATMUL ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;        
+    }
+
+    int num_devices;
+    CHECK_HIP(hipGetDeviceCount(&num_devices));
+
+    if (!num_devices)
+    {
+        printf("THABLAS MATMUL ERROR: COULD NOT FIND ANY COMPUTE DEVICE\n"); fflush(stdout);
+        return THABLAS_STATUS_ALLOC_FAILED;
+    }
+
+    float *A_d, *B_d, *C_d;
+
+    CHECK_HIP(hipSetDevice(0));
+    CHECK_HIP(hipMalloc(&A_d, M * K * sizeof(float)));
+    CHECK_HIP(hipMalloc(&B_d, K * N * sizeof(float)));
+    CHECK_HIP(hipMalloc(&C_d, M * N * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(A_d, A, M * K * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(B_d, B, K * N * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thablasStatus_t status = thaDNN_s_matmul_rocblas(handle, A_d, B_d, C_d, M, K, N);
+    if (status != THABLAS_STATUS_SUCCESS) 
+    {
+        printf("THABLAS MATMUL ERROR: ERROR on Device\n"); fflush(stdout);
+    }
+
+    CHECK_HIP(hipMemcpy(C, C_d, M * N * sizeof(float), hipMemcpyDeviceToHost));
+
+    CHECK_HIP(hipDeviceSynchronize());
+
+    CHECK_HIP(hipFree(A_d));
+    CHECK_HIP(hipFree(B_d));
+    CHECK_HIP(hipFree(C_d));
+
+    return THABLAS_STATUS_SUCCESS;
+}
+
+
+/*
+***************************************************************************************************************************
+* forward
+***************************************************************************************************************************
+*/
 thablasStatus_t thaDNN_s_forward(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, Transformer* transformer, int token, int pos, float* &output_logits) {
     // a few convenience variables
     Config* p = &transformer->config;
@@ -1813,9 +2066,14 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
         for(unsigned long long l = 0; l < pipe_size; l++) {
         
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->xb, s_batch[gid]->x, w[gid]->rms_att_weight + l*dim, dim, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wq + l*dim*dim,    s_batch[gid]->xb, s_batch[gid]->q,            dim,    batch_size, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wq + l*dim*dim,    s_batch[gid]->xb, s_batch[gid]->q,            dim,    batch_size, dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
+            CHECK_HIP(hipDeviceSynchronize());
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->wq + l*dim*dim,    s_batch[gid]->xb, s_batch[gid]->q,            dim,    dim, batch_size);
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, dim, batch_size);
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, dim, batch_size);
+            CHECK_HIP(hipDeviceSynchronize());
 
             float* s_batch_key_layer_cache;
             float* s_batch_value_layer_cache;
@@ -1854,7 +2112,10 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
             thablas_status = thaDNN_s_multiheads_2_batch(handle[gid], batch_size, s_batch[gid]->att, pos_d, multi_head_n_words, p->n_heads);
             thablas_status = thaDNN_s_multiheads_3_v2_batch(handle[gid], batch_size, pos_d, p->n_heads, s_batch[gid]->xb, s_batch[gid]->att, s_batch_value_layer_cache, head_size, multi_head_n_words, kv_dim, kv_mul, dim, pipe_size);
 
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
+            CHECK_HIP(hipDeviceSynchronize());
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, dim, batch_size);
+            CHECK_HIP(hipDeviceSynchronize());
 
             // copy data from device to swap memory
             if (max_pos + 1 > n_cache_words) 
@@ -1876,13 +2137,20 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
 
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->xb, s_batch[gid]->x, w[gid]->rms_ffn_weight + l*dim, dim, dim);
 
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->w1 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb, hidden_dim, batch_size, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->w3 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb2, hidden_dim, batch_size, dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->w1 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb, hidden_dim, batch_size, dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->w3 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb2, hidden_dim, batch_size, dim);
+            CHECK_HIP(hipDeviceSynchronize());
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->w1 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb, hidden_dim, dim, batch_size);
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->w3 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb2, hidden_dim, dim, batch_size);
+            CHECK_HIP(hipDeviceSynchronize());
 
             for(int b=0 ; b<batch_size ; ++b)
                 thablas_status = thaDNN_s_swiglu(handle[gid], s_batch[gid]->hb + b * hidden_dim, s_batch[gid]->hb2 + b * hidden_dim, hidden_dim);
 
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->w2 + l*dim*hidden_dim, s_batch[gid]->hb, s_batch[gid]->xb, dim, batch_size, hidden_dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->w2 + l*dim*hidden_dim, s_batch[gid]->hb, s_batch[gid]->xb, dim, batch_size, hidden_dim);
+            CHECK_HIP(hipDeviceSynchronize());
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->w2 + l*dim*hidden_dim, s_batch[gid]->hb, s_batch[gid]->xb, dim, hidden_dim, batch_size);
+            CHECK_HIP(hipDeviceSynchronize());
 
             for(int b=0 ; b<batch_size ; ++b)
                 thablas_status = thaBLAS_s_vecaddvec(handle[gid], s_batch[gid]->x + b * dim, s_batch[gid]->xb + b * dim, dim);
@@ -1894,7 +2162,9 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_cache_swap(thablasHand
             // CHECK_HIP(hipDeviceSynchronize());
         } else {
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->x, s_batch[gid]->x, w[gid]->rms_final_weight, dim, dim);
-            thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, batch_size, dim);
+            // thablas_status = thaDNN_s_matmul_batch(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, batch_size, dim);
+            CHECK_HIP(hipDeviceSynchronize());
+            thablas_status = thaDNN_s_matmul_prefetch(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, dim, batch_size);
         }
         CHECK_HIP(hipDeviceSynchronize());
 

@@ -1,11 +1,11 @@
 CXX      := hipcc
 CXXFLAGS := -Wall -std=c++17 --offload-arch=gfx908 -fopenmp -O3 # -Wextra -Werror -pedantic-errors
-LDFLAGS  := -L/usr/lib -lstdc++ -lm -fopenmp -O3
+LDFLAGS  := -L/usr/lib -lstdc++ -lm -fopenmp -O3 -L/opt/rocm/include/rocblas/ -lrocblas
 BUILD    := ./build
 OBJ_DIR  := $(BUILD)/objects
 APP_DIR  := $(BUILD)/apps
 TARGET   := llama
-INCLUDE  := -Iinclude/ -I/opt/rocm/include/hipblas -I/opt/rocm/include/rccl
+INCLUDE  := -Iinclude/ -I/opt/rocm/include/hipblas -I/opt/rocm/include/rccl -L/opt/rocm/include/rocblas/ -lrocblas
 SRC      :=                      \
    $(wildcard src/*.cpp)         \
 
