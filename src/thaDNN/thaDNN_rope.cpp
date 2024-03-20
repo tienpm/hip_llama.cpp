@@ -53,7 +53,9 @@ thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, int dim, int head_size, in
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim(ROUND_UP(dim, 128));
-    hipLaunchKernelGGL(thaDNN_s_rope_kernel, gridDim, blockDim, 0, 0, dim, head_size, kv_dim, pos, q, k);
+    hipLaunchKernelGGL(thaDNN_s_rope_kernel, 
+                       gridDim, blockDim, 0, 0, 
+                       dim, head_size, kv_dim, pos, q, k);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

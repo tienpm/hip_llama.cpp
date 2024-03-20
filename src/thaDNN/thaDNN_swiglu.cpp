@@ -4,10 +4,10 @@
 __global__ void thaDNN_s_swiglu_kernel(float* hb, float*hb2, int hidden_dim) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= hidden_dim) return;
-      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+    // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
     float val = hb[i];
     val *= (1.0f / (1.0f + expf(-val)));
-      // elementwise multiply with w3(x)
+    // elementwise multiply with w3(x)
     val *= hb2[i];
     hb[i] = val;
 }
@@ -25,7 +25,9 @@ thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, i
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((hidden_dim + blockDim.x - 1) / blockDim.x);
-    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, gridDim, blockDim, 0, 0, hb, hb2, hidden_dim);
+    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, 
+                       gridDim, blockDim, 0, 0, 
+                       hb, hb2, hidden_dim);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

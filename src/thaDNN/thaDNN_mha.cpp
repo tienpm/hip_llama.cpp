@@ -60,8 +60,7 @@ __global__ void thaDNN_s_multiheads_1_v2_batch_kernel(int pos[], int n_heads, in
 
     int b = 0;
     int pos_b = pos[b];
-    while (gx >= ((pos_b+1) * n_heads))
-    {
+    while (gx >= ((pos_b+1) * n_heads)) {
         gx -= (pos_b+1) * n_heads;
         ++b;
         pos_b = pos[b];
@@ -76,21 +75,18 @@ __global__ void thaDNN_s_multiheads_1_v2_batch_kernel(int pos[], int n_heads, in
     // float* s_k = s_key_cache_batch + t * (pipe_size * batch_size * kv_dim) + l * batch_size * kv_dim + b * kv_dim;
     float* s_k = s_key_cache_batch + t * batch_size * kv_dim + b * kv_dim;
 
-
     // k = s_key_cache + loff + t * KV_DIM + (h / KV_MUL) * HEAD_SIZE
     float score = 0.0f;
     float* q = s_q + h * head_size;
     // float* k = s_key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
     float* k = s_k + (h / kv_mul) * head_size;
     float* att = s_att + h * n_words;
-    for(int i=lx ; i<head_size ; i+=blockDim.x)
-    {
+    for(int i = lx ; i < head_size ; i += blockDim.x) {
         score += q[i] * k[i];
     }
 
     score = block_reduce_sum(score);
-    if (lx==0)
-    {
+    if (lx==0) {
         att[t] = score / sqrtf(head_size);
     }
 }
@@ -103,8 +99,7 @@ thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int batch
     // }
 
     int total_poses = 0;
-    for(int b=0 ; b<batch_size ; ++b)
-    {
+    for(int b = 0 ; b < batch_size ; ++b) {
         total_poses += (pos[b]+1);
     }
 
@@ -134,14 +129,12 @@ __global__ void thaDNN_s_multiheads_2_batch_kernel(int n_batches, float* s_att_b
 
     float private_max_val = -3.402e+38;
     __shared__ float max_val;
-    for (int i=lx ; i<size ; i+=bDim)
-    {
+    for (int i=lx ; i<size ; i+=bDim) {
         private_max_val = std::max(private_max_val, x[i]);
     }
 
     private_max_val = block_reduce_max(private_max_val);
-    if (lx==0)
-    {
+    if (lx == 0) {
         max_val = private_max_val;
     }
     __syncthreads();
@@ -149,15 +142,14 @@ __global__ void thaDNN_s_multiheads_2_batch_kernel(int n_batches, float* s_att_b
     
     float private_sum = 0.0f, tmp;
     __shared__ float sum;
-    for (int i =lx; i<size ; i+=bDim) {
+    for (int i = lx; i < size ; i += bDim) {
         tmp = expf(x[i] - private_max_val);
         x[i] = tmp;
         private_sum += tmp;
     }
 
     private_sum = block_reduce_sum(private_sum);
-    if (lx==0)
-    {
+    if (lx == 0) {
         sum = private_sum;
     }
     __syncthreads();
@@ -200,8 +192,7 @@ __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, in
     float sum = 0.0f;
     float *att, *v, *xb;
     int pos_b = pos[b];
-    for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
-    {
+    for(int t = lx ; t < pos_b + 1 ; t += blockDim.x) {
         att = s_att_batch + h * n_words + b * n_heads *  n_words;
         float a = att[t];
 
@@ -211,9 +202,9 @@ __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, in
 
         sum += a * v[i];
     }
+
     sum = block_reduce_sum(sum);
-    if (lx == 0)
-    {
+    if (lx == 0) {
         xb = s_xb_batch + h * head_size + b * dim;
         xb[i] = sum;
     }

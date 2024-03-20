@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <time.h>
-#include <math.h>
+// #include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -167,7 +167,6 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     tokens[(*n_tokens)++] = dummy_prefix;
   }
 
-  // fprintf(stderr, "\nDEBUG 1.1\n");
   // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
   // Code point ↔ UTF-8 conversion
   // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
@@ -681,7 +680,8 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // ----------------------------------------------------------------------------
 // You should parallelize and optimize from this function exploiting multiple GPUs
 
-int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size=1) {
+int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size, 
+         float temperature, float topp, unsigned long long rng_seed) {
   // Count the number of the generated tokens
   int gen_cnt = 0;
 
@@ -988,7 +988,7 @@ int main(int argc, char *argv[]) {
     // {
     long start, end;
     start = time_in_ms();
-    int num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    int num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch, temperature, topp, rng_seed);
     end = time_in_ms();
 
     // Your goal is to achieve best throughput(=reduce elapsed time)! 
