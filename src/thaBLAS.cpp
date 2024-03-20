@@ -308,7 +308,7 @@ __global__ void thaBLAS_s_sgemm_Mx16xK_kernel(const float *A, const float *B, fl
 
         for (int i = 0; i < 4; ++i) 
         {
-            const int idx = threadIdx.x * M + i + threadIdx.y * 4 + i_off; -> // column major
+            const int idx = threadIdx.x * M + i + threadIdx.y * 4 + i_off;// -> column major
             D[idx] = dmn[i];
         }
     }
@@ -319,7 +319,7 @@ thablasStatus_t thaBLAS_s_sgemm_Mx16xK(thablasHandle_t handle, float *d_A, float
     dim3 blockDim(16, 4, 1);
     dim3 gridDim(M / 16, 1, 1);
     
-    hipLaunchKernelGGL(thaBLAS_s_sgemm_16x16xK_kernel, gridDim, blockDim, 0, 0, d_A, d_B, d_D, M, N, K);
+    hipLaunchKernelGGL(thaBLAS_s_sgemm_Mx16xK_kernel, gridDim, blockDim, 0, 0, d_A, d_B, d_D, M, N, K);
 
     return THABLAS_STATUS_SUCCESS;
 }
