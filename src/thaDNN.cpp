@@ -280,9 +280,12 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle
 
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->xb, s_batch[gid]->x, w[gid]->rms_att_weight + l*dim, dim, dim);
 
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wq + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->q,   dim, batch_size, dim);
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wq + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->q,   dim, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->wq + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->q,   dim, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->wk + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->key_matmul,   kv_dim, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->wv + l*dim*kv_dim, s_batch[gid]->xb, s_batch[gid]->value_matmul, kv_dim, batch_size, dim);
             
             for(int b=0 ; b<batch_size ; ++b) {
                 int offset = pos[b] * batch_size * kv_dim + b * kv_dim;
@@ -298,20 +301,24 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle
             thablas_status = thaDNN_s_multiheads_2_batch(handle[gid], batch_size, s_batch[gid]->att, pos_d, multi_head_n_words, p->n_heads);
             thablas_status = thaDNN_s_multiheads_3_v2_batch(handle[gid], batch_size, pos_d, p->n_heads, s_batch[gid]->xb, s_batch[gid]->att, s_batch_value_layer_cache, head_size, multi_head_n_words, kv_dim, kv_mul, dim, pipe_size);
 
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->wo + l*dim*dim, s_batch[gid]->xb, s_batch[gid]->xb2, dim, batch_size, dim);
 
             for(int b=0 ; b<batch_size ; ++b)
                 thablas_status = thaBLAS_s_vecaddvec(handle[gid], s_batch[gid]->x + b * dim, s_batch[gid]->xb2 + b * dim, dim);
 
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->xb, s_batch[gid]->x, w[gid]->rms_ffn_weight + l*dim, dim, dim);
 
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->w1 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb, hidden_dim, batch_size, dim);
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->w3 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb2, hidden_dim, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->w1 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb, hidden_dim, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->w3 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb2, hidden_dim, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->w1 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb, hidden_dim, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->w3 + l*dim*hidden_dim, s_batch[gid]->xb, s_batch[gid]->hb2, hidden_dim, batch_size, dim);
 
             for(int b=0 ; b<batch_size ; ++b)
                 thablas_status = thaDNN_s_swiglu(handle[gid], s_batch[gid]->hb + b * hidden_dim, s_batch[gid]->hb2 + b * hidden_dim, hidden_dim);
 
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->w2 + l*dim*hidden_dim, s_batch[gid]->hb, s_batch[gid]->xb, dim, batch_size, hidden_dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->w2 + l*dim*hidden_dim, s_batch[gid]->hb, s_batch[gid]->xb, dim, batch_size, hidden_dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->w2 + l*dim*hidden_dim, s_batch[gid]->hb, s_batch[gid]->xb, dim, batch_size, hidden_dim);
 
             for(int b=0 ; b<batch_size ; ++b)
                 thablas_status = thaBLAS_s_vecaddvec(handle[gid], s_batch[gid]->x + b * dim, s_batch[gid]->xb + b * dim, dim);
@@ -323,7 +330,8 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle
             // CHECK_HIP(hipDeviceSynchronize());
         } else {
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->x, s_batch[gid]->x, w[gid]->rms_final_weight, dim, dim);
-            thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, batch_size, dim);
+            // thablas_status = thaBLAS_s_matmul_reduction(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, batch_size, dim);
+            thablas_status = thaBLAS_s_sgemm_Mx16xK(handle[gid], w[gid]->wcls, s_batch[gid]->x, logits_host, p->vocab_size, batch_size, dim);
         }
 
         CHECK_HIP(hipFree(pos_d));

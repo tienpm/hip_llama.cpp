@@ -693,7 +693,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 1;
+  batch_size = 16;
   int n_host_threads = 4;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);

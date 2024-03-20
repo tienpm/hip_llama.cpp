@@ -290,36 +290,36 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, float *A, flo
     return THABLAS_STATUS_SUCCESS;
 }
 
-__global__ void thaBLAS_s_sgemm_16x16x4_kernel(const float *A, const float *B, float *D)
+__global__ void thaBLAS_s_sgemm_Mx16xK_kernel(const float *A, const float *B, float *D, int M, int N, int K)
 {
-    const int M = 16;
-    const int N = 16;
-    const int K = 4;
-
     using float4 = __attribute__( (__vector_size__(4 * sizeof(float)) )) float;
     float4 dmn = {0};
+    int i_off = blockIdx.x * 16;
 
-    int mk = threadIdx.y + K * threadIdx.x;
-    int kn = threadIdx.x + N * threadIdx.y;
-
-    float amk = A[mk];
-    float bkn = B[kn];
-    dmn = __builtin_amdgcn_mfma_f32_16x16x4f32(amk, bkn, dmn, 0, 0, 0);
-
-    for (int i = 0; i < 4; ++i) 
+    for(int t=0 ; t<K ; t+=4)
     {
-        const int idx = threadIdx.x + i * N + threadIdx.y * 4 * N;
-        printf("id:%d\n", idx);
-        D[idx] = dmn[i];
+        int mk = threadIdx.y + t + K * threadIdx.x + i_off * K; // A[x][y] = i * K + k
+        // int kn = threadIdx.x + N * threadIdx.y; // B[y][x] = j + k * N -> row major
+        int kn = threadIdx.x * K + threadIdx.y + t ; // B[y][x] = j * K + k -> column major
+
+        float amk = A[mk];
+        float bkn = B[kn];
+        dmn = __builtin_amdgcn_mfma_f32_16x16x4f32(amk, bkn, dmn, 0, 0, 0);
+
+        for (int i = 0; i < 4; ++i) 
+        {
+            const int idx = threadIdx.x * M + i + threadIdx.y * 4 + i_off; -> // column major
+            D[idx] = dmn[i];
+        }
     }
 }
 
-thablasStatus_t thaBLAS_s_sgemm_16x16x4(thablasHandle_t handle, float *d_A, float *d_B, float *d_D, int M, int N, int K)
+thablasStatus_t thaBLAS_s_sgemm_Mx16xK(thablasHandle_t handle, float *d_A, float *d_B, float *d_D, int M, int N, int K)
 {
     dim3 blockDim(16, 4, 1);
-    dim3 gridDim(1, 1, 1);
+    dim3 gridDim(M / 16, 1, 1);
     
-    hipLaunchKernelGGL(thaBLAS_s_sgemm_16x16x4_kernel, gridDim, blockDim, 0, 0, d_A, d_B, d_D);
+    hipLaunchKernelGGL(thaBLAS_s_sgemm_16x16xK_kernel, gridDim, blockDim, 0, 0, d_A, d_B, d_D, M, N, K);
 
     return THABLAS_STATUS_SUCCESS;
 }

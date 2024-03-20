@@ -126,7 +126,7 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle,
                                             int N, 
                                             int K);
 
-thablasStatus_t thaBLAS_s_sgemm_16x16x4(thablasHandle_t handle, 
+thablasStatus_t thaBLAS_s_sgemm_Mx16xK(thablasHandle_t handle, 
                                             float *d_A, 
                                             float *d_B, 
                                             float *d_D, 

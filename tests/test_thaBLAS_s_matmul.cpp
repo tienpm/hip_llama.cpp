@@ -87,7 +87,7 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
     return THABLAS_STATUS_SUCCESS;
 }
 
-bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
+bool check_mat_mul_BC_col_major(float *A, float *B, float *C, int M, int N, int K) {
     float *C_ans;
     alloc_mat(&C_ans, M, N);
     zero_mat(C_ans, M, N);
@@ -95,15 +95,15 @@ bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
     #pragma omp parallel for num_threads(20)
     for (int i = 0; i < M; ++i) {
         for (int k = 0; k < K; ++k) {
-        for (int j = 0; j < N; ++j) {
-            C_ans[i * N + j] += A[i * K + k] * B[k * N + j];
-        }
+            for (int j = 0; j < N; ++j) {
+                C_ans[i + j * M] += A[i * K + k] * B[k + j * K];
+            }
         }
     }
 
     bool is_valid = true;
     int cnt = 0, thr = 10;
-    float eps = 1e-3;
+    float eps = 1e-4;
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
         float c = C[i * N + j];
@@ -147,11 +147,13 @@ bool check_mat_mul(float *A, float *B, float *C, int M, int N, int K) {
     }
 }
 
-bool thaBLAS_h2d_s_sgemm_16x16x4()
+// K must be divisible by 4
+bool thaBLAS_h2d_s_sgemm_Mx16xK()
 {
-    int M = 16;
+    int M = 1024;
     int N = 16;
-    int K = 4;
+    int K = 1024;
+    
     float *A, *B, *C;
     alloc_mat(&A, M, K);
     alloc_mat(&B, K, N);
@@ -172,19 +174,19 @@ bool thaBLAS_h2d_s_sgemm_16x16x4()
 
     thablasHandle_t handle;
     thablasCreate(&handle);
-    thaBLAS_s_sgemm_16x16x4(handle, d_A, d_B, d_C, M, N, K);
+    thaBLAS_s_sgemm_Mx16xK(handle, d_A, d_B, d_C, M, N, K);
 
     CHECK_HIP(hipMemcpy(C, d_C, M * N * sizeof(float), hipMemcpyDeviceToHost));
     CHECK_HIP(hipDeviceSynchronize());
         
-    return check_mat_mul(A, B, C, M, N, K);
+    return check_mat_mul_BC_col_major(A, B, C, M, N, K);
 }
 
 int main() {
   // TODO: Unitetst operator function
   bool valid = 1;
 
-  valid = thaBLAS_h2d_s_sgemm_16x16x4();
+  valid = thaBLAS_h2d_s_sgemm_Mx16xK();
   assert(valid);
 
   return 0;
