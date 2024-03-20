@@ -95,7 +95,7 @@ __global__ void thaDNN_s_multiheads_1_v2_batch_kernel(int pos[], int n_heads, in
     }
 }
 
-thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int batch_size, int pipe_size, int pos[], int pos_d[], int n_heads, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int n_words, int kv_dim, int dim, int kv_mul) {
+thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t* handle, int batch_size, int pipe_size, int pos[], int pos_d[], int n_heads, float* s_q_batch, float* s_att_batch, float* s_key_cache_batch, int head_size, int n_words, int kv_dim, int dim, int kv_mul) {
     // if (s_q_batch==nullptr || s_att_batch==nullptr || s_key_cache_batch==nullptr || head_size + seq_len + kv_dim + dim==0)
     // {
     //     printf("THABLAS MULTI_HEADS_1 BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
@@ -114,7 +114,7 @@ thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle, int batch
     dim3 blockDim(MAX_BLOCK_SIZE);
     dim3 gridDim(total_poses * n_heads);
     // CAUTION: careful playing with [pos]. 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_1_v2_batch_kernel, gridDim, blockDim, 0, 0, pos_d, n_heads, pipe_size, batch_size, s_q_batch, s_att_batch, s_key_cache_batch, head_size, n_words, kv_dim, dim, kv_mul);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_1_v2_batch_kernel, gridDim, blockDim, 0, handle->calc_stream, pos_d, n_heads, pipe_size, batch_size, s_q_batch, s_att_batch, s_key_cache_batch, head_size, n_words, kv_dim, dim, kv_mul);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -171,7 +171,7 @@ __global__ void thaDNN_s_multiheads_2_batch_kernel(int n_batches, float* s_att_b
 // _s_ = single persion (float)
 // input: output, x allocated on device
 // input: size = 32000
-thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads) {
+thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t* handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads) {
     // if (seq_len+n_heads+n_batches==0 || s_att_batch == nullptr || handle.current_gpu_id < 0)
     // {
     //     printf("THABLAS SOFTMAX BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
@@ -183,7 +183,7 @@ thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, int n_batche
     dim3 blockDim(1024);
     dim3 gridDim(n_heads, n_batches);
 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_2_batch_kernel, gridDim, blockDim, 0, 0, n_batches, s_att_batch, size_batch, seq_len, n_heads);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_2_batch_kernel, gridDim, blockDim, 0, handle->calc_stream, n_batches, s_att_batch, size_batch, seq_len, n_heads);
     // CHECK_HIP(hipGetLastError());
     return THABLAS_STATUS_SUCCESS;
 }
@@ -219,7 +219,7 @@ __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, in
     }
 }
 
-thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, int batch_size, int pos_d[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int n_words, int kv_dim, int kv_mul, int dim, int pipe_size) {
+thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t* handle, int batch_size, int pos_d[], int n_heads, float *s_xb_batch, float *s_att_batch, float *s_value_cache_batch, int head_size, int n_words, int kv_dim, int kv_mul, int dim, int pipe_size) {
     // if (s_xb_batch==nullptr || s_att_batch==nullptr || s_value_cache_batch==nullptr || head_size==0 || seq_len==0 || kv_dim==0)
     // {
     //     printf("THABLAS MULTI_HEADS_3 BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
@@ -231,7 +231,7 @@ thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, int batch
     dim3 blockDim(1024);
     dim3 gridDim(head_size, n_heads, batch_size);
     // CAUTION: careful playing with [pos]. 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v2_batch_kernel, gridDim, blockDim, 0, 0, pos_d, n_heads, batch_size, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, n_words, kv_dim, kv_mul, dim, pipe_size);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v2_batch_kernel, gridDim, blockDim, 0, handle->calc_stream, pos_d, n_heads, batch_size, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, n_words, kv_dim, kv_mul, dim, pipe_size);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

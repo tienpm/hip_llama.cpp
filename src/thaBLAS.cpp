@@ -49,7 +49,8 @@ thablasStatus_t thablasCreate(thablasHandle_t* handle)
     CHECK_HIP(hipGetDevice(&current_gpu_id));
     handle->current_gpu_id = current_gpu_id;
 
-    // CHECK_HIP(hipStreamCreate(&handle->stream_));
+    CHECK_HIP(hipStreamCreate(&handle->calc_stream));
+    CHECK_HIP(hipStreamCreate(&handle->copy_stream));
 
     return THABLAS_STATUS_SUCCESS;
 }
@@ -105,19 +106,19 @@ __global__ void thaBLAS_s_vecaddvec_kernel(float *a, float *b, int size)
         a[i] += b[i];
 }
 
-thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size)
+thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t* handle, float *a, float *b, int size)
 {
-    if (a == nullptr || b == nullptr || size == 0)
-    {
-        printf("THABLAS VEC ADD VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
-        return THABLAS_STATUS_ALLOC_FAILED;        
-    }
+    // if (a == nullptr || b == nullptr || size == 0)
+    // {
+    //     printf("THABLAS VEC ADD VEC ERROR: INVALID ARGUMENT\n"); fflush(stdout);
+    //     return THABLAS_STATUS_ALLOC_FAILED;        
+    // }
 
-    CHECK_HIP(hipSetDevice(handle.current_gpu_id));
+    // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((size + 64 - 1) / 64);
-    hipLaunchKernelGGL(thaBLAS_s_vecaddvec_kernel, gridDim, blockDim, 0, 0, a, b, size);
-    CHECK_HIP(hipGetLastError());
+    hipLaunchKernelGGL(thaBLAS_s_vecaddvec_kernel, gridDim, blockDim, 0, handle->calc_stream, a, b, size);
+    // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
 }
@@ -276,7 +277,7 @@ __global__ void thaBLAS_s_matmul_reduction_kernel(float *A, float *B, float *C, 
 
 
 // B and C are col major
-thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, float *A, float *B, float *C, int M, int N, int K)
+thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t* handle, float *A, float *B, float *C, int M, int N, int K)
 {
     // if (K + M + n_batches==0 || A == nullptr || B_batch == nullptr || C_batch == nullptr || handle.current_gpu_id < 0)
     // {
@@ -288,7 +289,7 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, float *A, flo
     dim3 blockDim(MAX_BLOCK_SIZE);
     dim3 gridDim(M, N);
 
-    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, 0, 0, A, B, C, M, N ,K);
+    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, 0, handle->calc_stream, A, B, C, M, N ,K);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

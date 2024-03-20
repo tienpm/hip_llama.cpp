@@ -61,7 +61,7 @@ __global__ void thaDNN_s_rmsnorm_kernel_v2_batch(int n_batches, float* o_batch, 
     }
 }
 
-thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t handle, int n_batches, float* o_batch, float* x_batch, float* weight, int size, int dim) {
+thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t* handle, int n_batches, float* o_batch, float* x_batch, float* weight, int size, int dim) {
     // if (size+dim==0 || o_batch == nullptr || x_batch == nullptr || weight == nullptr || handle.current_gpu_id < 0)
     // {
     //     printf("THABLAS RMSNORM V2 BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
@@ -72,7 +72,7 @@ thablasStatus_t thaDNN_s_rmsnorm_v2_batch(thablasHandle_t handle, int n_batches,
     dim3 blockDim(1024);
     dim3 gridDim(n_batches);
     hipLaunchKernelGGL(thaDNN_s_rmsnorm_kernel_v2_batch, 
-                       gridDim, blockDim, 0, 0, 
+                       gridDim, blockDim, 0, handle->calc_stream, 
                        n_batches, o_batch, x_batch, weight, size, dim);
     
     // CHECK_HIP(hipGetLastError());

@@ -21,7 +21,8 @@ typedef enum
 typedef struct 
 {
     int current_gpu_id;
-    // hipStream_t stream_;
+    hipStream_t calc_stream;
+    hipStream_t copy_stream;
 } thablasHandle_t;
 
 thablasStatus_t thablasCreate(thablasHandle_t* handle);
@@ -57,7 +58,7 @@ thablasStatus_t thablas_Svds(thablasHandle_t handle, int n, float* A, float* B, 
 
 // thablasStatus_t thablas_c2d_Svds(int n, float* A, float* B, float val, int max_num_gpus);
 
-thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t handle, float *a, float *b, int size);
+thablasStatus_t thaBLAS_s_vecaddvec(thablasHandle_t* handle, float *a, float *b, int size);
 
 // thablasStatus_t thaBLAS_h2d_s_vecaddvec(float *a, float *b, int size);
 
@@ -118,7 +119,7 @@ thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t handle,
                                             int C_batch_size, 
                                             int B_batch_size);
 
-thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t handle, 
+thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t* handle, 
                                             float *A, 
                                             float *B, 
                                             float *C, 

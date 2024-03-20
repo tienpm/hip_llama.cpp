@@ -2,7 +2,7 @@
 #include "thaBLAS.hpp"
 
 
-thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle,
+thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t* handle,
                                                int batch_size,
                                                int pipe_size, 
                                                int pos[], 
@@ -21,7 +21,7 @@ thablasStatus_t thaDNN_s_multiheads_1_v2_batch(thablasHandle_t handle,
 // _s_ = single persion (float)
 // input: output, x allocated on device
 // input: size = 32000
-thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle, 
+thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t* handle, 
                                             int n_batches, 
                                             float* s_att_batch, 
                                             int size_batch[], 
@@ -30,7 +30,7 @@ thablasStatus_t thaDNN_s_multiheads_2_batch(thablasHandle_t handle,
 
 
 
-thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t handle, 
+thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t* handle, 
                                                int batch_size, int pos_d[], 
                                                int n_heads, 
                                                float *s_xb_batch, 

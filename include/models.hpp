@@ -54,6 +54,8 @@ typedef struct {
   float* value_cache; // (layer, seq_len, dim??) -> dim or kv_dim ??
   float* key_matmul;
   float* value_matmul;
+  float* key_layer_cache;
+  float* value_layer_cache;
 } RunState;
 
 typedef struct {
@@ -75,4 +77,6 @@ void copy_transformer_pipeline_to_device(thablasHandle_t handle, Transformer* t_
 void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id, int batch_size);
 void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size);
 void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size);
+void alloc_swap_run_state_on_host_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_h, int pipe_size, int pipe_id, int batch_size, int n_buffer_words);
+void alloc_swap_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size, int n_buffer_words);
 void free_transformer_device();
