@@ -87,8 +87,107 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
     return THABLAS_STATUS_SUCCESS;
 }
 
+bool check_mat_mul_BC_col_major(float *A, float *B, float *C, int M, int N, int K) {
+    float *C_ans;
+    alloc_mat(&C_ans, M, N);
+    zero_mat(C_ans, M, N);
+
+    #pragma omp parallel for num_threads(20)
+    for (int i = 0; i < M; ++i) {
+        for (int k = 0; k < K; ++k) {
+            for (int j = 0; j < N; ++j) {
+                C_ans[i + j * M] += A[i * K + k] * B[k + j * K];
+            }
+        }
+    }
+
+    bool is_valid = true;
+    int cnt = 0, thr = 10;
+    float eps = 1e-4;
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+        float c = C[i * N + j];
+        float c_ans = C_ans[i * N + j];
+        if (fabsf(c - c_ans) > eps &&
+            (c_ans == 0 || fabsf((c - c_ans) / c_ans) > eps)) {
+            ++cnt;
+            if (cnt <= thr)
+            printf("C[%d][%d] : correct_value = %f, your_value = %f\n", i, j, c_ans, c);
+            if (cnt == thr + 1)
+            printf("Too many error, only first %d values are printed.\n", thr);
+            is_valid = false;
+        }
+        }
+    }
+
+    // for (int i = 0; i < M; ++i) {
+    //   for (int j = 0; j < K; ++j) 
+    //     printf("%0.2f ", A[i * K + j]);
+    //   printf("\n");
+    // }
+    // printf("\n");
+    // for (int i = 0; i < K; ++i) {
+    //   for (int j = 0; j < N; ++j) 
+    //     printf("%0.2f ", B[i * N + j]);
+    //   printf("\n");
+    // }
+    // printf("\n"); fflush(stdout);
+
+    util_free((void*)A);
+    util_free((void*)B);
+    util_free((void*)C);
+    util_free((void*)C_ans);
+
+    if (is_valid) {
+        printf("Validation: VALID\n");  fflush(stdout);
+        return 1;
+    } else {
+        printf("Validation: INVALID\n");  fflush(stdout);
+        return 0;
+    }
+}
+
+// K must be divisible by 4
+bool thaBLAS_h2d_s_sgemm_Mx16xK()
+{
+    int M = 1024;
+    int N = 16;
+    int K = 1024;
+    
+    float *A, *B, *C;
+    alloc_mat(&A, M, K);
+    alloc_mat(&B, K, N);
+    alloc_mat(&C, M, N);
+    rand_mat(A, M, K);
+    rand_mat(B, K, N);
+    zero_mat(C, M, N);
+
+    float *d_A;
+    float *d_B;
+    float *d_C;
+    CHECK_HIP(hipMalloc(&d_A, M * K * sizeof(float)));
+    CHECK_HIP(hipMalloc(&d_B, K * N * sizeof(float)));
+    CHECK_HIP(hipMalloc(&d_C, M * N * sizeof(float)));
+
+    CHECK_HIP(hipMemcpy(d_A, A, M * K * sizeof(float), hipMemcpyHostToDevice));
+    CHECK_HIP(hipMemcpy(d_B, B, K * N * sizeof(float), hipMemcpyHostToDevice));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    thaBLAS_s_sgemm_Mx16xK(handle, d_A, d_B, d_C, M, N, K);
+
+    CHECK_HIP(hipMemcpy(C, d_C, M * N * sizeof(float), hipMemcpyDeviceToHost));
+    CHECK_HIP(hipDeviceSynchronize());
+        
+    return check_mat_mul_BC_col_major(A, B, C, M, N, K);
+}
+
 int main() {
   // TODO: Unitetst operator function
-  
+  bool valid = 1;
+
+  valid = thaBLAS_h2d_s_sgemm_Mx16xK();
+  assert(valid);
+
   return 0;
 }
