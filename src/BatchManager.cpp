@@ -13,7 +13,13 @@ BatchManager::BatchManager(int batch_size, int seq_len, int n_layers, int kv_dim
 }
 
 size_t BatchManager::alloc_new_block(thablasHandle_t* handle) {
-  ++this->cur_physical_blocks
+  int new_block_id = ++this->cur_physical_blocks;
+  CHECK_HIP(hipSetDevice(handle->current_gpu_id));
+
+  float* block_addr;
+  CHECK_HIP(hipMalloc(&block_addr, this->nrow_blocks * this->kv_dim * sizeof(float)));
+  this->logicId_physicAddr_mapper[new_block_id] = make_pair(block_addr, 0);
+  return new_block_id;
 }
 
 void BatchManager::set_gpu_physical_blocks(int d_id) {
