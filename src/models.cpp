@@ -321,7 +321,7 @@ void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transform
   // CHECK_HIP(hipMemcpy(t_d->state.value_cache, t_h->state.value_cache, pipe_size * seq_len * kv_dim * sizeof(float), hipMemcpyHostToDevice));
 }
 
-void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size)
+void copy_transformer_weight_pipeline_to_device_batch(Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size)
 {
   Config *p = &t_h->config;
   int dim = p->dim;

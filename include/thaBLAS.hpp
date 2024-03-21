@@ -106,7 +106,7 @@ thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t handle, float *C, float *B
 thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, float* A, float* B, float* C);
 
 // A[M,K] x B[K,1] = C[M,1]
-thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t handle, 
+thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t* handle, 
                                             int n_batches, 
                                             float *C_batch, 
                                             float *B_batch, 
@@ -123,6 +123,22 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t* handle,
                                             float *A, 
                                             float *B, 
                                             float *C, 
+                                            int M, 
+                                            int N, 
+                                            int K);
+
+thablasStatus_t thaBLAS_s_sgemm_Mx16xK(thablasHandle_t* handle, 
+                                            float *d_A, 
+                                            float *d_B, 
+                                            float *d_D, 
+                                            int M, 
+                                            int N,
+                                            int K);
+
+thablasStatus_t thaBLAS_s_matmul_ifdef(thablasHandle_t* handle, 
+                                            float *d_A, 
+                                            float *d_B, 
+                                            float *d_D,
                                             int M, 
                                             int N, 
                                             int K);
