@@ -1,4 +1,5 @@
 #include "models.hpp"
+#include "hip/hip_runtime.h"
 
 // copy transformer checkpoint data from host to device
 // all scalar values and pointer values are still stored on host
@@ -321,9 +322,12 @@ void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transform
   // CHECK_HIP(hipMemcpy(t_d->state.value_cache, t_h->state.value_cache, pipe_size * seq_len * kv_dim * sizeof(float), hipMemcpyHostToDevice));
 }
 
-void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size)
-{
-  Config *p = &t_h->config;
+/*
+ *              ALLOC AND COPY WEIGHT PIPELINE PARALLELISM
+ * */
+
+void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h_t, TransformerWeights* d_w, int d_id, int n_chunk_layers, int n_devices) {
+  Config *p = &h_t->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
   int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -331,7 +335,8 @@ void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Tr
   // int n_heads = p->n_heads;
   // int seq_len = p->seq_len;
 
-  w_d = (TransformerWeights*)malloc(sizeof(TransformerWeights));
+  // d_w = (TransformerWeights*)malloc(sizeof(TransformerWeights));
+  CHECK_HIP(hipHostMalloc((void **)&d_w, sizeof(TransformerWeights)));
   // Config config; // the hyperparameters of the architecture (the blueprint)
   // TransformerWeights weights; // the weights of the model
   // RunState state; // buffers for the "wave" of activations in the forward pass
@@ -340,37 +345,43 @@ void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Tr
   // float* data; // memory mapped data pointer
   // ssize_t file_size; // size of the checkpoint file in bytes
 
-  CHECK_HIP(hipMalloc(&w_d->token_embedding_table, vocab_size * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->rms_att_weight, pipe_size * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->rms_ffn_weight, pipe_size * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->wq, pipe_size * dim * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->wk, pipe_size * dim * kv_dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->wv, pipe_size * dim * kv_dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->wo, pipe_size * dim * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->w1, pipe_size * hidden_dim * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->w2, pipe_size * dim * hidden_dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->w3, pipe_size * hidden_dim * dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->rms_final_weight, dim * sizeof(float)));
-  CHECK_HIP(hipMalloc(&w_d->wcls, dim * vocab_size * sizeof(float)));  
+  CHECK_HIP(hipMalloc(&d_w->token_embedding_table, vocab_size * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->rms_att_weight, n_chunk_layers * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->rms_ffn_weight, n_chunk_layers * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->wq, n_chunk_layers * dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->wk, n_chunk_layers * dim * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->wv, n_chunk_layers * dim * kv_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->wo, n_chunk_layers * dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->w1, n_chunk_layers * hidden_dim * dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->w2, n_chunk_layers * dim * hidden_dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->w3, n_chunk_layers * hidden_dim * dim * sizeof(float)));
+  // TODO: Need to malloc and copy just on the last device
+  CHECK_HIP(hipMalloc(&d_w->rms_final_weight, dim * sizeof(float)));
+  CHECK_HIP(hipMalloc(&d_w->wcls, dim * vocab_size * sizeof(float)));  
 
-  int poff = pipe_id * pipe_size;
-  CHECK_HIP(hipMemcpy(w_d->token_embedding_table, t_h->weights.token_embedding_table, vocab_size * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->rms_att_weight,        t_h->weights.rms_att_weight + poff * dim,  pipe_size * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->rms_ffn_weight,        t_h->weights.rms_ffn_weight + poff * dim,  pipe_size * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->wq,                    t_h->weights.wq + poff * dim * dim,        pipe_size * dim * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->wk,                    t_h->weights.wk + poff * dim * kv_dim,     pipe_size * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->wv,                    t_h->weights.wv + poff * dim * kv_dim,     pipe_size * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->wo,                    t_h->weights.wo + poff * dim * dim,        pipe_size * dim * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->w1,                    t_h->weights.w1 + poff * hidden_dim * dim, pipe_size * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->w2,                    t_h->weights.w2 + poff * dim * hidden_dim, pipe_size * dim * hidden_dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->w3,                    t_h->weights.w3 + poff * hidden_dim * dim, pipe_size * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->rms_final_weight, t_h->weights.rms_final_weight, dim * sizeof(float), hipMemcpyHostToDevice));
-  CHECK_HIP(hipMemcpy(w_d->wcls, t_h->weights.wcls, dim * vocab_size * sizeof(float), hipMemcpyHostToDevice));
+  int n_layers_off = d_id * n_chunk_layers;
+  CHECK_HIP(hipMemcpy(d_w->token_embedding_table, h_t->weights.token_embedding_table, vocab_size * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->rms_att_weight,        h_t->weights.rms_att_weight + n_layers_off * dim,  n_chunk_layers * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->rms_ffn_weight,        h_t->weights.rms_ffn_weight + n_layers_off * dim,  n_chunk_layers * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->wq,                    h_t->weights.wq + n_layers_off * dim * dim,        n_chunk_layers * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->wk,                    h_t->weights.wk + n_layers_off * dim * kv_dim,     n_chunk_layers * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->wv,                    h_t->weights.wv + n_layers_off * dim * kv_dim,     n_chunk_layers * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->wo,                    h_t->weights.wo + n_layers_off * dim * dim,        n_chunk_layers * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->w1,                    h_t->weights.w1 + n_layers_off * hidden_dim * dim, n_chunk_layers * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->w2,                    h_t->weights.w2 + n_layers_off * dim * hidden_dim, n_chunk_layers * dim * hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->w3,                    h_t->weights.w3 + n_layers_off * hidden_dim * dim, n_chunk_layers * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+  // TODO: Need to malloc and copy just on the last device
+  CHECK_HIP(hipMemcpy(d_w->rms_final_weight, h_t->weights.rms_final_weight, dim * sizeof(float), hipMemcpyHostToDevice));
+  CHECK_HIP(hipMemcpy(d_w->wcls, h_t->weights.wcls, dim * vocab_size * sizeof(float), hipMemcpyHostToDevice));
 }
 
-void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size)
-{
-  Config *p = &t_h->config;
+
+/*
+ *              ALLOC RUN STATE PIPELINE PARALLELISM
+ * */
+
+void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_model, RunState* d_s, int n_chunk_layers, int batch_size) {
+  Config *p = &h_model->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
   int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -378,7 +389,7 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, R
   int n_heads = p->n_heads;
   int seq_len = p->seq_len;
 
-  s_d = (RunState*)malloc(sizeof(RunState));
+  CHECK_HIP(hipHostMalloc((void**)&d_s, sizeof(RunState)));
   // Config config; // the hyperparameters of the architecture (the blueprint)
   // TransformerWeights weights; // the weights of the model
   // RunState state; // buffers for the "wave" of activations in the forward pass
@@ -387,18 +398,18 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, R
   // float* data; // memory mapped data pointer
   // ssize_t file_size; // size of the checkpoint file in bytes
 
-  CHECK_HIP(hipMalloc(&s_d->x, dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->xb, dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->xb2, dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->hb, hidden_dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->hb2, hidden_dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->q, dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->att, n_heads * seq_len * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->logits, vocab_size * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->key_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->value_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->key_matmul, kv_dim * sizeof(float) * batch_size));
-  CHECK_HIP(hipMalloc(&s_d->value_matmul, kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->x, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->xb, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->xb2, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->hb, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->hb2, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->q, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->att, n_heads * seq_len * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->logits, vocab_size * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->key_cache, n_chunk_layers * seq_len * kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->value_cache, n_chunk_layers * seq_len * kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->key_matmul, kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->value_matmul, kv_dim * sizeof(float) * batch_size));
 }
 
 void free_transformer_device() {}

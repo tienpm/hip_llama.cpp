@@ -20,6 +20,7 @@
 #include "seq.hpp"
 #include "thaDNN.hpp"
 #include "thaBLAS.hpp"
+#include "BatchManager.hpp"
 #include "utils.hpp"
 
 
@@ -680,8 +681,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // ----------------------------------------------------------------------------
 // You should parallelize and optimize from this function exploiting multiple GPUs
 
-int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size, 
-         float temperature, float topp, unsigned long long rng_seed) {
+int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size) {
   // Count the number of the generated tokens
   int gen_cnt = 0;
 
@@ -691,51 +691,70 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
   }
+ 
+  BatchManager h_batch_manager(batch_size, requests->max_seq_len, 
+                               transformer->config.n_layers, 
+                               transformer->config.n_kv_heads);
 
-  int n_devices = 0;
-  batch_size = 1;
-  int n_host_threads = 4;
+  int n_devices = 1;
+  // batch_size = 1;
+  int n_mini_batch = 4;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
-  fprintf(stderr, "\n Num Devices %d\n", n_devices);
+  fprintf(stderr, "\n Num GPUs %d\n", n_devices);
+  fprintf(stderr, "Batch Size %d\n", batch_size);
   int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
-  int pipe_size = n_layers / n_devices;
-  
+  int pipe_size = n_layers / n_devices;   // TODO: Need update to pipeline parallel when device is odd
+
+  thablasHandle_t handle[n_devices];
   omp_lock_t device_locks[n_devices];
+  TransformerWeights* d_weight[n_devices];
+  int device_host_thread[n_devices];
+  
+  /* ===== COPY MODEL TO DEVICE ====== */ 
+  #pragma omp parallel for num_threads(n_devices)
+  for(int d_id=0 ; d_id < n_devices ; ++d_id) {
+    CHECK_HIP(hipSetDevice(d_id));
+    device_host_thread[d_id] = 0;
+    omp_init_lock(&device_locks[d_id]);
+    thablasCreate(&handle[d_id]);
+    // copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, d_w[gid], pipe_size, d_id);
+    scatter_transformer_weight_to_device(handle[d_id], transformer, d_weight[d_id], pipe_size, d_id, n_devices);
+  }
+
+  /* ================= BATCH MANAGE ================== */
+  size_t freeMem = h_batch_manager.get_gpu_memory(0);
+  fprintf(stderr, "%zu GB", freeMem / 1024 / 1024 / 1024);
+  // return gen_cnt;
+  /* ===================================== */
+  
   omp_lock_t idx_lock, n_done_lock;
   omp_init_lock(&idx_lock);
   omp_init_lock(&n_done_lock);
   int next_idx = 0;
   int n_done = 0;
-  int host_thread_status[n_host_threads], device_host_thread[n_devices];
-  int gen_cnt_host_thread[n_host_threads];
+  int host_thread_status[n_mini_batch];
+  int gen_cnt_host_thread[n_mini_batch];
 
   thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
 
-  TransformerWeights* w_d[n_devices];
-  thablasHandle_t handle[n_devices];
-  for(int gid=0 ; gid<n_devices ; ++gid) {
-    CHECK_HIP(hipSetDevice(gid));
-    device_host_thread[gid] = 0;
-    omp_init_lock(&device_locks[gid]);
-    thablasCreate(&handle[gid]);
-    copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, w_d[gid], pipe_size, gid, batch_size);
-  }
 
-  #pragma omp parallel num_threads(n_host_threads) 
+  // Resolve Bubbles by deviding a mini-batch of data into micro-batches 
+  // and each CPU threads will control 1 mini-batch
+  #pragma omp parallel num_threads(n_mini_batch) 
   {
     int fid = omp_get_thread_num();
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
     CPU_SET(fid, &cpu_set);
     sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
-    fprintf(stderr, "\nFlow ID %d\n", fid);
+    fprintf(stderr, "\nThread - Mini-batch ID %d\n", fid);
 
-    float *logits_host;
-    CHECK_HIP(hipHostMalloc(&logits_host, batch_size * vocab_size * sizeof(float)));
+    float *h_logits;
+    CHECK_HIP(hipHostMalloc(&h_logits, batch_size * vocab_size * sizeof(float)));
 
     int indices[batch_size];
-    for(int b=0 ; b<batch_size ; ++b)
+    for(int b = 0 ; b < batch_size ; ++b)
       indices[b] = -1;
 
     std::string gen_str[batch_size];
@@ -743,19 +762,20 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     int *prompt_tokens[batch_size];
     int num_prompt_tokens[batch_size];
 
-    // long start = 0; // used to time our code, only initialized after first iteration
-    int next[batch_size]; // will store the next token in the sequence
-    int token[batch_size]; // kick off with the first token in the prompt
-    int pos[batch_size]; // position in the sequence
-    int steps[batch_size]; // max sequence length
+    // long start = 0;           // used to time our code, only initialized after first iteration
+    int next[batch_size];        // will store the next token in the sequence
+    int token[batch_size];       // kick off with the first token in the prompt
+    int pos[batch_size];         // position in the sequence
+    int steps[batch_size];       // max sequence length
     bool is_done[batch_size];
-    float* logits_d[batch_size];
+    float* d_logits[batch_size]; // logits of each sequence 
 
     host_thread_status[fid] = 0;
+    // Each mini-batch will have a run state in device
     RunState* s_d_batch[n_devices];
-    for(int gid=0 ; gid<n_devices ; ++gid) {
-      CHECK_HIP(hipSetDevice(gid));
-      alloc_run_state_to_device_batch(handle[gid], transformer, s_d_batch[gid], pipe_size, gid, batch_size);
+    for(int d_id = 0 ; d_id < n_devices ; ++d_id) {
+      CHECK_HIP(hipSetDevice(d_id));
+      alloc_run_state_to_device_batch(handle[d_id], transformer, s_d_batch[d_id], pipe_size, batch_size);
     }
 
     Tokenizer private_tokenizer;
@@ -770,8 +790,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
       omp_unset_lock(&n_done_lock);
       if (stop) break;
 
-      // assgin new request to batch
-      for(int b=0 ; b<batch_size ; ++b) {
+      // Continous Batching: Assgin new request to batch
+      for (int b=0 ; b<batch_size ; ++b) {
         // if there exist next request
         if (indices[b] == -1) {
           omp_set_lock(&idx_lock);
@@ -779,13 +799,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           if (next_idx < requests->num_reqs) ++next_idx;
           omp_unset_lock(&idx_lock);
 
-          if (indices[b] >= requests->num_reqs)
-          {
+          if (indices[b] >= requests->num_reqs) {
             indices[b] = -1;
             continue;
           }
 
-          fprintf(stderr, "\nFlow %d Request %d\n", fid, indices[b]);
+          fprintf(stderr, "\nMini Batch %d Request %d\n", fid, indices[b]);
           gen_str[b] = "";
           prompt[b] = get_str_req_ptr(requests, indices[b]);
           prompt_tokens[b] = (int*)malloc((strlen(prompt[b])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
@@ -802,21 +821,27 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           pos[b] = 0; // position in the sequence
           steps[b] = requests->max_seq_len; // max sequence length
           is_done[b] = false;
-          logits_d[b] = nullptr;
+          d_logits[b] = nullptr;
         }
       }
 
+      fprintf(stderr, "\n DEBUG 0\n");
       // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
-      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_host_threads, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, host_thread_status, device_host_thread, device_locks);
+      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_mini_batch, 
+                                                             n_devices, batch_size, pipe_size, 
+                                                             &transformer->config, 
+                                                             d_weight, s_d_batch, token, pos, 
+                                                             h_logits, host_thread_status, 
+                                                             device_host_thread, device_locks);
+      fprintf(stderr, "\n DEBUG 1\n");
 
-      // advance the state machine
+      // Continous Batching: Decode logits of each tokens in batch of the mini-batch
       for(int b = 0 ; b < batch_size; ++b) {
-        if (indices[b] > -1) 
-        {
+        if (indices[b] > -1) {
           if (pos[b] < num_prompt_tokens[b] - 1) {
             next[b] = prompt_tokens[b][pos[b] + 1];
           } else {
-            next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
+            next[b] = sample(&samplers[indices[b]], h_logits + b * vocab_size);
             // next[b] = prompt_tokens[b][1];
             // next[b] = sample(&samplers[indices[b]], logits[b]);
           }
@@ -827,6 +852,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           else
           {
             char* piece = decode(&private_tokenizer, token[b], next[b]);
+            // fprintf(stderr, "\nprompts: %d - token_id: %d\n", indices[b], next[b]);
             append_str(piece, gen_str[b]);
             token[b] = next[b];
             // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
@@ -842,15 +868,13 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
         }
       }
       
-      // de-assgin the requests
-      for(int b=0 ; b<batch_size ; ++b)
-      {
-        if (is_done[b] && indices[b] > -1)
-        {
+      // Continous Batching: de-assgin the requests from batch
+      for(int b = 0 ; b < batch_size ; ++b) {
+        if (is_done[b] && indices[b] > -1) {
           gen_str[b] += "\n";
           strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
           free(prompt_tokens[b]);
-          fprintf(stderr, "\nFlow %d DONE %d\n", fid, indices[b]);
+          fprintf(stderr, "\nMini Batch %d DONE Request %d\n", fid, indices[b]);
           indices[b] = -1;
           is_done[b] = false;
           pos[b] = 0;
@@ -866,12 +890,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     }
   } // end host_thread parallel
 
-  for(int idx = 0; idx < requests->num_reqs; idx++) {
+  for (int idx = 0; idx < requests->num_reqs; idx++) {
     free_sampler(&samplers[idx]);
   }
 
   gen_cnt = 0;
-  for(int fid = 0; fid < n_host_threads; ++fid)
+  for (int fid = 0; fid < n_mini_batch; ++fid)
     gen_cnt += gen_cnt_host_thread[fid];
   fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
 
@@ -988,7 +1012,7 @@ int main(int argc, char *argv[]) {
     // {
     long start, end;
     start = time_in_ms();
-    int num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch, temperature, topp, rng_seed);
+    int num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     end = time_in_ms();
 
     // Your goal is to achieve best throughput(=reduce elapsed time)! 

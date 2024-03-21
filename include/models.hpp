@@ -73,6 +73,10 @@ void alloc_state_to_device(Transformer* t_h, RunState* &s_d);
 void alloc_state_to_device_batch(Transformer* t_h, RunState* &s_d_batch, int batch_size);
 void copy_transformer_pipeline_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id);
 void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d, int pipe_size, int pipe_id, int batch_size);
-void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size);
-void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size);
+// void copy_transformer_weight_pipeline_to_device_batch(thablasHandle_t handle, Transformer* t_h, TransformerWeights* &w_d, int pipe_size, int pipe_id, int batch_size);
+// void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size);
 void free_transformer_device();
+
+
+void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h_t, TransformerWeights* d_w, int d_id, int n_chunk_layers, int n_devices);
+void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_model, RunState* d_s, int n_chunk_layers, int batch_size);
