@@ -266,6 +266,7 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle
                 CHECK_HIP(hipMemcpy(s_batch[0]->x + b * dim, content_row[b], dim * sizeof(float), hipMemcpyDeviceToDevice));
             }
         }
+        
 
         int *d_pos;
         int max_pos = pos[0];

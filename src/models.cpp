@@ -326,7 +326,7 @@ void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transform
  *              ALLOC AND COPY WEIGHT PIPELINE PARALLELISM
  * */
 
-void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h_t, TransformerWeights* d_w, int d_id, int n_chunk_layers, int n_devices) {
+void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h_t, TransformerWeights* &d_w, int d_id, int n_chunk_layers, int n_devices) {
   Config *p = &h_t->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -335,8 +335,7 @@ void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h
   // int n_heads = p->n_heads;
   // int seq_len = p->seq_len;
 
-  // d_w = (TransformerWeights*)malloc(sizeof(TransformerWeights));
-  CHECK_HIP(hipHostMalloc((void **)&d_w, sizeof(TransformerWeights)));
+  d_w = (TransformerWeights*)malloc(sizeof(TransformerWeights));
   // Config config; // the hyperparameters of the architecture (the blueprint)
   // TransformerWeights weights; // the weights of the model
   // RunState state; // buffers for the "wave" of activations in the forward pass
@@ -380,7 +379,7 @@ void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h
  *              ALLOC RUN STATE PIPELINE PARALLELISM
  * */
 
-void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_model, RunState* d_s, int n_chunk_layers, int batch_size) {
+void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_model, RunState* &d_s, int n_chunk_layers, int batch_size) {
   Config *p = &h_model->config;
   int dim = p->dim;
   int vocab_size = p->vocab_size;
@@ -389,7 +388,7 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_mode
   int n_heads = p->n_heads;
   int seq_len = p->seq_len;
 
-  CHECK_HIP(hipHostMalloc((void**)&d_s, sizeof(RunState)));
+  d_s = (RunState*)malloc(sizeof(RunState));
   // Config config; // the hyperparameters of the architecture (the blueprint)
   // TransformerWeights weights; // the weights of the model
   // RunState state; // buffers for the "wave" of activations in the forward pass

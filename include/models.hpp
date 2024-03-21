@@ -78,5 +78,5 @@ void copy_transformer_pipeline_to_device_batch(thablasHandle_t handle, Transform
 void free_transformer_device();
 
 
-void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h_t, TransformerWeights* d_w, int d_id, int n_chunk_layers, int n_devices);
-void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_model, RunState* d_s, int n_chunk_layers, int batch_size);
+void scatter_transformer_weight_to_device(thablasHandle_t handle, Transformer* h_t, TransformerWeights* &d_w, int d_id, int n_chunk_layers, int n_devices);
+void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* h_model, RunState* &d_s, int n_chunk_layers, int batch_size);

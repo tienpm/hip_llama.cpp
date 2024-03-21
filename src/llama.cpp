@@ -719,12 +719,12 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     omp_init_lock(&device_locks[d_id]);
     thablasCreate(&handle[d_id]);
     // copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, d_w[gid], pipe_size, d_id);
-    scatter_transformer_weight_to_device(handle[d_id], transformer, d_weight[d_id], pipe_size, d_id, n_devices);
+    scatter_transformer_weight_to_device(handle[d_id], transformer, d_weight[d_id], d_id, pipe_size, n_devices);
   }
 
   /* ================= BATCH MANAGE ================== */
   size_t freeMem = h_batch_manager.get_gpu_memory(0);
-  fprintf(stderr, "%zu GB", freeMem / 1024 / 1024 / 1024);
+  fprintf(stderr, "%f GB", double(freeMem) / 1024 / 1024 / 1024);
   // return gen_cnt;
   /* ===================================== */
   
@@ -825,7 +825,6 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
         }
       }
 
-      fprintf(stderr, "\n DEBUG 0\n");
       // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
       tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_mini_batch, 
                                                              n_devices, batch_size, pipe_size, 
@@ -833,7 +832,6 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
                                                              d_weight, s_d_batch, token, pos, 
                                                              h_logits, host_thread_status, 
                                                              device_host_thread, device_locks);
-      fprintf(stderr, "\n DEBUG 1\n");
 
       // Continous Batching: Decode logits of each tokens in batch of the mini-batch
       for(int b = 0 ; b < batch_size; ++b) {
