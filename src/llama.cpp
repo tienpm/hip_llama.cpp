@@ -994,8 +994,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
 
           token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
           pos[b] = 0; // position in the sequence
-          // steps[b] = requests->max_seq_len; // max sequence length
-          steps[b] = 200;
+          steps[b] = requests->max_seq_len; // max sequence length
+          // steps[b] = 200;
           is_done[b] = false;
           logits_d[b] = nullptr;
         }
