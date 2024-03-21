@@ -24,7 +24,7 @@ public:
   float* gpu_physical_KV_blocks;
   vector<float*> cpu_physical_KV_blocks;
 
-  map<size_t, pair<float*, int> > logicId_physicAddr_mapper; 
+  map<size_t, KVBlock > logicId_physicAddr_mapper; 
 
 
   BatchManager(int batch_size, int seq_len, int n_layers, int kv_dim);
@@ -39,9 +39,9 @@ public:
 
   size_t alloc_new_block(thablasHandle_t* handle);
 
-  pair<float*, int> get_physicAddr_from_id(thablasHandle_t* handle, size_t seq_id);
+  KVBlock get_block_by_id(thablasHandle_t* handle, size_t block_id);
 
-  vector<pair<float*, int>> convert_block_ids_to_block_addrs(thablasHandle_t* handle, vector<size_t> block_ids);
+  vector<KVBlock> convert_block_ids_to_block_addrs(thablasHandle_t* handle, vector<size_t> block_ids);
 
   void push_kv_data_to_kv_cache(thablasHandle_t* handle, vector<size_t> kv_cache_block_ids, float* data);
 

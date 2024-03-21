@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "BatchManager.hpp"
+#include "models.hpp"
 #include "thaBLAS.hpp"
 
 
@@ -17,8 +18,9 @@ size_t BatchManager::alloc_new_block(thablasHandle_t* handle) {
   CHECK_HIP(hipSetDevice(handle->current_gpu_id));
 
   float* block_addr;
-  CHECK_HIP(hipMalloc(&block_addr, this->nrow_blocks * this->kv_dim * sizeof(float)));
-  this->logicId_physicAddr_mapper[new_block_id] = make_pair(block_addr, 0);
+  // K_data + V_data = 2 * kv_dim
+  CHECK_HIP(hipMalloc(&block_addr, 2 * this->nrow_blocks * this->kv_dim * sizeof(float))); 
+  this->logicId_physicAddr_mapper[new_block_id] = KVBlock{block_addr, 0};
   return new_block_id;
 }
 
@@ -38,33 +40,32 @@ size_t BatchManager::get_gpu_memory(int d_id) {
   return freeMem;
 }
 
-pair<float*, int> BatchManager::get_physicAddr_from_id(thablasHandle_t* handle, size_t block_id) {
+KVBlock BatchManager::get_block_by_id(thablasHandle_t* handle, size_t block_id) {
   return this->logicId_physicAddr_mapper[block_id];
 }
 
-vector<pair<float*, int>> BatchManager::convert_block_ids_to_block_addrs(thablasHandle_t* handle, vector<size_t> block_ids) {
-  vector<pair<float*, int>> block_addrs;
+vector<KVBlock> BatchManager::convert_block_ids_to_block_addrs(thablasHandle_t* handle, vector<size_t> block_ids) {
+  vector<KVBlock> block_addrs;
   for(size_t block_id: block_ids) {
-    block_addrs.push_back(this->get_physicAddr_from_id(handle, block_id));
+    block_addrs.push_back(this->get_block_by_id(handle, block_id));
   }
 
 }
 
 void BatchManager::push_kv_data_to_kv_cache(thablasHandle_t* handle, vector<size_t> kv_cache_block_ids, float* data) {
   size_t last_block_id = kv_cache_block_ids.back();
-  pair<float*, int> last_block = this->get_physicAddr_from_id(handle, last_block_id);
+  KVBlock last_block = this->get_block_by_id(handle, last_block_id);
 
-  if (last_block.second >= this->nrow_blocks)
-
-  if (last_block.second < this->nrow_blocks)
-  {
-    float* pos_to_push = last_block.first + last_block.second * this->kv_dim;
-    ++last_block.second;
-
-    CHECK_HIP(hipMemcpyAsync(pos_to_push, data, kv_dim * sizeof(float), hipMemcpyDeviceToDevice, handle->calc_stream));
+  if (last_block.occupied >= this->nrow_blocks) {
+    last_block_id = this->alloc_new_block(handle);
+    kv_cache_block_ids.push_back(last_block_id);
+    last_block = this->get_block_by_id(handle, last_block_id);
   }
 
-
+  float* pos_to_push = last_block.addr + last_block.occupied * this->kv_dim;
+  // K_data + V_data = 2 * kv_dim
+  CHECK_HIP(hipMemcpyAsync(pos_to_push, data, 2 * kv_dim * sizeof(float), hipMemcpyDeviceToDevice, handle->calc_stream));
+  ++last_block.occupied;
 }
 
 void BatchManager::dealloc_gpu_block(int seq_id) {

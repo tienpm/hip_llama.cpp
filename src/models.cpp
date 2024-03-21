@@ -472,4 +472,37 @@ void alloc_swap_run_state_to_device_batch(thablasHandle_t handle, Transformer* t
   CHECK_HIP(hipMalloc(&s_d->value_layer_cache, p->seq_len * kv_dim * sizeof(float) * batch_size));
 }
 
+void alloc_run_state_to_device_batch_paged_att(thablasHandle_t handle, Transformer* h_t, RunState* &d_s, int pipe_size, int layer_trunk_size, int batch_size)
+{
+  Config *p = &h_t->config;
+  int dim = p->dim;
+  int vocab_size = p->vocab_size;
+  int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+  int hidden_dim = p->hidden_dim;
+  int n_heads = p->n_heads;
+  int seq_len = p->seq_len;
+
+  d_s = (RunState*)malloc(sizeof(RunState));
+  // Config config; // the hyperparameters of the architecture (the blueprint)
+  // TransformerWeights weights; // the weights of the model
+  // RunState state; // buffers for the "wave" of activations in the forward pass
+  // // some more state needed to properly clean up the memory mapping (sigh)
+  // int fd; // file descriptor for memory mapping
+  // float* data; // memory mapped data pointer
+  // ssize_t file_size; // size of the checkpoint file in bytes
+
+  CHECK_HIP(hipMalloc(&d_s->x, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->xb, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->xb2, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->hb, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->hb2, hidden_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->q, dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->att, n_heads * seq_len * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->logits, vocab_size * sizeof(float) * batch_size));
+  // CHECK_HIP(hipMalloc(&d_s->key_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+  // CHECK_HIP(hipMalloc(&d_s->value_cache, pipe_size * seq_len * kv_dim * sizeof(float) * batch_size));
+  CHECK_HIP(hipMalloc(&d_s->key_matmul, kv_dim * sizeof(float) * batch_size)); 
+  CHECK_HIP(hipMalloc(&d_s->value_matmul, kv_dim * sizeof(float) * batch_size));
+}
+
 void free_transformer_device() {}

@@ -68,6 +68,12 @@ typedef struct {
   ssize_t file_size; // size of the checkpoint file in bytes
 } Transformer;
 
+typedef struct {
+  float* addr;
+  int occupied;
+} KVBlock;
+
+
 void set_transformer();
 void copy_transformer_to_device(thablasHandle_t handle, Transformer* t_h, Transformer* &t_d);
 void copy_weight_to_device(Transformer* t_h, TransformerWeights* &w_d);
@@ -80,3 +86,4 @@ void alloc_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, R
 void alloc_swap_run_state_on_host_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_h, int pipe_size, int pipe_id, int batch_size, int n_buffer_words);
 void alloc_swap_run_state_to_device_batch(thablasHandle_t handle, Transformer* t_h, RunState* &s_d, int pipe_size, int pipe_id, int batch_size, int n_buffer_words);
 void free_transformer_device();
+
