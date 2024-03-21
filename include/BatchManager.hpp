@@ -3,6 +3,7 @@
 #include <map>
 
 #include "hip_helper.hpp"
+#include "models.hpp"
 #include "thaBLAS.hpp"
 
 using namespace std;

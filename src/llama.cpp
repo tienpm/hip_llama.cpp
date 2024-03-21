@@ -878,7 +878,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 4;
+  batch_size = 1;
   int n_host_threads = 4;
   int n_buffer_words = transformer->config.seq_len;
 
