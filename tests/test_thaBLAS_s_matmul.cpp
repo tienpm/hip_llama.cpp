@@ -89,6 +89,8 @@ thablasStatus_t thaBLAS_h2d_s_matmul(int m, int n, int k, float* A, float* B, fl
 
 int main() {
   // TODO: Unitetst operator function
+
+  
   
   return 0;
 }
