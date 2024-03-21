@@ -270,7 +270,7 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle
 
         int *d_pos;
         int max_pos = pos[0];
-        for(int b = 1 ; b < batch_size ; ++b) max_pos = MAX(pos[b], max_pos);
+        for(int b = 1 ; b < batch_size ; ++b) max_pos = std::max(pos[b], max_pos);
         CHECK_HIP(hipMalloc(&d_pos, batch_size * sizeof(int)));
         CHECK_HIP(hipMemcpy(d_pos, pos, batch_size * sizeof(int), hipMemcpyHostToDevice));
 

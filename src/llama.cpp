@@ -712,6 +712,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   int device_host_thread[n_devices];
   
   /* ===== COPY MODEL TO DEVICE ====== */ 
+  long copy_start, copy_end;
+  copy_start = time_in_ms();
   #pragma omp parallel for num_threads(n_devices)
   for(int d_id=0 ; d_id < n_devices ; ++d_id) {
     CHECK_HIP(hipSetDevice(d_id));
@@ -721,6 +723,8 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     // copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, d_w[gid], pipe_size, d_id);
     scatter_transformer_weight_to_device(handle[d_id], transformer, d_weight[d_id], d_id, pipe_size, n_devices);
   }
+  copy_end = time_in_ms();
+  fprintf(stderr, "Copy elapsed time(s): %f\n", (double)(copy_end - copy_start)/1000);
 
   /* ================= BATCH MANAGE ================== */
   size_t freeMem = h_batch_manager.get_gpu_memory(0);
@@ -872,7 +876,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           gen_str[b] += "\n";
           strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
           free(prompt_tokens[b]);
-          fprintf(stderr, "\nMini Batch %d DONE Request %d\n", fid, indices[b]);
+          fprintf(stderr, "\nMini Batch %d DONE Request %d - Num done: %d\n", fid, indices[b], n_done + 1);
           indices[b] = -1;
           is_done[b] = false;
           pos[b] = 0;
