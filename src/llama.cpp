@@ -812,6 +812,7 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
           } else {
             next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
           }
+          ++pos[b];
 
           if (next[b] == 1 || next[b] == 2) {
             is_done[b] = true;
@@ -823,8 +824,6 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
             // fflush(stdout);
             append_str(piece, gen_str[b]);
             token[b] = next[b];
-
-            ++pos[b]; // TODO: update `++pos` positon
             if (pos[b] >= steps[b]) {
               is_done[b] = true;
             }
@@ -1008,6 +1007,7 @@ int test_70B(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_pat
           } else {
             next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
           }
+          ++pos[b];
 
           if (next[b] == 1 || next[b] == 2) {
             is_done[b] = true;
@@ -1020,7 +1020,6 @@ int test_70B(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_pat
             append_str(piece, gen_str[b]);
             token[b] = next[b];
 
-            ++pos[b]; // TODO: update `++pos` positon
             if (pos[b] >= steps[b]) {
               is_done[b] = true;
             }
@@ -1210,6 +1209,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
             // next[b] = prompt_tokens[b][1];
             // next[b] = sample(&samplers[indices[b]], logits[b]);
           }
+          ++pos[b];
 
           if (next[b] == 1 || next[b] == 2) {
             is_done[b] = true;
@@ -1222,7 +1222,6 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
             // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
             // fflush(stdout);
             // fprintf(stderr, "%d %s\n", pos[b], piece);
-            ++pos[b];
             if (pos[b] >= steps[b]) {
               is_done[b] = true;
             }
