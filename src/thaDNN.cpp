@@ -82,6 +82,116 @@ thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t 
     return thablas_status;
 }
 
+thablasStatus_t thaDNN_s_forward_70B(thablasHandle_t handle, int batch_size, Config *p, TransformerWeights* h_w[], RunState* h_s, TransformerWeights* d_w, RunState* d_s, int token[], int pos[], float* logits_host) {
+    float *x[batch_size];
+    int dim = p->dim;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 
+    int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    int hidden_dim =  p->hidden_dim;
+    int head_size = dim / p->n_heads;
+    for(int b=0 ; b<batch_size ; ++b)
+        x[b] = d_s->x + b * dim;
+
+    int *pos_d;
+    CHECK_HIP(hipMalloc(&pos_d, batch_size * sizeof(int)));
+    CHECK_HIP(hipMemcpy(pos_d, pos, batch_size * sizeof(int), hipMemcpyHostToDevice));
+
+    thablasStatus_t thablas_status = THABLAS_STATUS_SUCCESS;
+
+    // fprintf(stderr, "CP0\n");
+
+    // copy the token embedding into x
+    float* content_row[batch_size];
+    for(int b=0 ; b<batch_size ; ++b)
+    {
+        content_row[b] = d_w->token_embedding_table + token[b] * dim;
+        // memcpy(x[b], content_row[b], dim*sizeof(float)); // TODO: copy device to device
+        CHECK_HIP(hipMemcpy(d_s->x + b * dim, content_row[b], dim*sizeof(float), hipMemcpyDeviceToDevice));
+    }
+
+    // forward all the layers
+    for(unsigned long long l = 0; l < p->n_layers; l++) {
+
+        // CHECK_HIP(hipMemcpy(d_w->rms_att_weight, h_w->rms_att_weight + l*dim, 1 * dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->rms_ffn_weight, h_w->rms_ffn_weight + l*dim, 1 * dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->wq,             h_w->wq + l*dim*dim, 1 * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->wk,             h_w->wk + l*dim*kv_dim, 1 * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->wv,             h_w->wv + l*dim*kv_dim, 1 * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->wo,             h_w->wo + l*dim*dim, 1 * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->w1,             h_w->w1 + l*hidden_dim*dim, 1 * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->w2,             h_w->w2 + l*dim*hidden_dim, 1 * dim * hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+        // CHECK_HIP(hipMemcpy(d_w->w3,             h_w->w3 + l*hidden_dim*dim, 1 * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+
+        CHECK_HIP(hipMemcpy(d_w->rms_att_weight, h_w[l]->rms_att_weight, 1 * dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->rms_ffn_weight, h_w[l]->rms_ffn_weight, 1 * dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->wq,             h_w[l]->wq, 1 * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->wk,             h_w[l]->wk, 1 * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->wv,             h_w[l]->wv, 1 * dim * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->wo,             h_w[l]->wo, 1 * dim * dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->w1,             h_w[l]->w1, 1 * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->w2,             h_w[l]->w2, 1 * dim * hidden_dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_w->w3,             h_w[l]->w3, 1 * hidden_dim * dim * sizeof(float), hipMemcpyHostToDevice));
+
+        CHECK_HIP(hipMemcpy(d_s->key_cache,   h_s->key_cache   + l * p->seq_len * kv_dim, (pos[0]+1) * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipMemcpy(d_s->value_cache, h_s->value_cache + l * p->seq_len * kv_dim, (pos[0]+1) * kv_dim * sizeof(float), hipMemcpyHostToDevice));
+        CHECK_HIP(hipDeviceSynchronize());
+        
+        // fprintf(stderr, "CP1\n");
+
+        thablas_status = thaDNN_s_rmsnorm_v2_batch(&handle, batch_size, d_s->xb, d_s->x, d_w->rms_att_weight, dim, dim);
+
+        int loff = 0;
+
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->q, d_s->xb, d_w->wq, dim, dim, 0, 0, pos_d, dim, dim);
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->key_cache, d_s->xb, d_w->wk, dim, kv_dim, loff, kv_dim, pos_d, p->n_layers * p->seq_len * kv_dim, dim);
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->value_cache, d_s->xb, d_w->wv, dim, kv_dim, loff, kv_dim, pos_d, p->n_layers * p->seq_len * kv_dim, dim);
+
+        // fprintf(stderr, "CP2\n");
+
+        for(int b=0 ; b<batch_size ; ++b)
+            thablas_status = thaDNN_s_rope(&handle, dim, head_size, kv_dim, pos[b], d_s->q + b * dim, d_s->key_cache + loff + pos[b] * kv_dim + b * p->n_layers * p->seq_len * kv_dim);
+
+        // multi-head attention
+        thablas_status = thaDNN_s_multiheads_1_v1_batch(&handle, batch_size, pos, pos_d, p->n_heads, p->n_layers, d_s->q, d_s->att, d_s->key_cache, head_size, p->seq_len, loff, kv_dim, dim, kv_mul);
+        thablas_status = thaDNN_s_multiheads_2_v1_batch(&handle, batch_size, d_s->att, pos_d, p->seq_len, p->n_heads);
+        thablas_status = thaDNN_s_multiheads_3_v1_batch(&handle, batch_size, pos_d, p->n_heads, d_s->xb, d_s->att, d_s->value_cache, head_size, p->seq_len, loff, kv_dim, kv_mul, dim, p->n_layers);
+
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->xb2, d_s->xb, d_w->wo, dim, dim, 0, 0, pos_d, dim, dim);
+
+        for(int b=0 ; b<batch_size ; ++b)
+            thablas_status = thaBLAS_s_vecaddvec(&handle, x[b], d_s->xb2 + b * dim, dim);
+
+        thablas_status = thaDNN_s_rmsnorm_v2_batch(&handle, batch_size, d_s->xb, d_s->x, d_w->rms_ffn_weight, dim, dim);
+
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->hb, d_s->xb, d_w->w1, dim, hidden_dim, 0, 0, pos_d, hidden_dim, dim);
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->hb2, d_s->xb, d_w->w3, dim, hidden_dim, 0, 0, pos_d, hidden_dim, dim);
+
+        for(int b=0 ; b<batch_size ; ++b)
+            thablas_status = thaDNN_s_swiglu(&handle, d_s->hb + b * hidden_dim, d_s->hb2 + b * hidden_dim, hidden_dim);
+
+        thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, d_s->xb, d_s->hb, d_w->w2, hidden_dim, dim, 0, 0, pos_d, dim, hidden_dim);
+
+        for(int b=0 ; b<batch_size ; ++b)
+            thablas_status = thaBLAS_s_vecaddvec(&handle, x[b], d_s->xb + b * dim, dim);
+
+        CHECK_HIP(hipDeviceSynchronize());
+        CHECK_HIP(hipMemcpy(h_s->key_cache   + l * p->seq_len * kv_dim, d_s->key_cache,   (pos[0]+1) * kv_dim * sizeof(float), hipMemcpyDeviceToHost));
+        CHECK_HIP(hipMemcpy(h_s->value_cache + l * p->seq_len * kv_dim, d_s->value_cache, (pos[0]+1) * kv_dim * sizeof(float), hipMemcpyDeviceToHost));
+        CHECK_HIP(hipDeviceSynchronize());
+        // fprintf(stderr, "CP3\n");
+    }
+    // fprintf(stderr, "CP4\n");
+
+    thablas_status = thaDNN_s_rmsnorm_v2_batch(&handle, batch_size, d_s->x, d_s->x, d_w->rms_final_weight, dim, dim);
+    thablas_status = thaBLAS_s_matmul_batch(&handle, batch_size, logits_host, d_s->x, d_w->wcls, dim, p->vocab_size, 0, 0, pos_d, p->vocab_size, dim);
+    // for(int b=0 ; b<batch_size ; ++b)    
+    //     output_logits[b] = d_s->logits + b * p->vocab_size;
+        
+    CHECK_HIP(hipDeviceSynchronize());
+    CHECK_HIP(hipFree(pos_d));
+    return thablas_status;
+}
+
 
 // thablasStatus_t thaDNN_s_forward_batch_pipe_line(thablasHandle_t handle[], int n_devices, int batch_size, Transformer* transformer_d[], int token[], int pos[], float* logits_host) {
 //     TransformerWeights* w[n_devices];

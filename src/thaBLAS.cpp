@@ -203,7 +203,7 @@ thablasStatus_t thaBLAS_s_matmul_batch(thablasHandle_t* handle, int n_batches, f
     dim3 gridDim(M, n_batches);
 
     hipLaunchKernelGGL(thaBLAS_s_matmul_batch_kernel, 
-                       gridDim, blockDim, 0, 0, 
+                       gridDim, blockDim, 0, handle->calc_stream, 
                        C_batch, B_batch, A, K, M, Coff, has_pos, pos_d, C_batch_size, B_batch_size);
     // CHECK_HIP(hipGetLastError());
 
@@ -259,21 +259,34 @@ thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t* handle, float *C, float *
 // [B and C are col major
 __global__ void thaBLAS_s_matmul_reduction_kernel(float *A, float *B, float *C, int M, int N, int K)
 {
-    int i = blockIdx.x;
+    int gx = blockIdx.x;
     int j = blockIdx.y;
     int lx = threadIdx.x;
-    float sum = 0.0f;
 
     float *Ccol = C + j * M;
     float *Bcol = B + j * K;
-    for (int k=lx ; k<K ; k+=blockDim.x)
+
+    float sum;
+    int i, k;
+    extern __shared__ float shared_B[];
+
+    for (k=lx ; k<K ; k+=blockDim.x)
+        shared_B[k] = Bcol[k];
+    __syncthreads();
+
+    for(int ii=0 ; ii<4 ; ++ii)
     {
-        sum += A[i*K + k] * Bcol[k];
-    }
-    sum = block_reduce_sum(sum);
-    if (lx == 0)
-    {
-        Ccol[i] = sum;
+        i = (gx*4 + ii);
+        sum = 0.0f;
+        for (k=lx ; k<K ; k+=blockDim.x)
+        {
+            sum += A[i*K + k] * shared_B[k];
+        }
+        sum = warp_reduce_sum(sum);
+        if (lx == 0)
+        {
+            Ccol[i] = sum;
+        }
     }
 }
 
@@ -288,10 +301,10 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t* handle, float *A, fl
     // }
 
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(MAX_BLOCK_SIZE);
-    dim3 gridDim(M, N);
+    dim3 blockDim(64);
+    dim3 gridDim(M/4, N);
 
-    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, 0, handle->calc_stream, A, B, C, M, N ,K);
+    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, K * sizeof(float), handle->calc_stream, A, B, C, M, N ,K);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
