@@ -179,6 +179,7 @@ __global__ void thaBLAS_s_matmul_batch_kernel(float *C_batch, float *B_batch, fl
 
     float *C = C_batch + Coff + has_pos * pos[b] + b * C_batch_size;
     float *B = B_batch + b * B_batch_size;
+    #pragma unroll
     for (int k=lx ; k<K ; k+=blockDim.x)
     {
         sum += A[gx*K + k] * B[k];

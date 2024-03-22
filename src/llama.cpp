@@ -695,7 +695,7 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
   int n_devices = 0;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
-  batch_size = 4;
+  batch_size = 2;
   int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
 
@@ -838,8 +838,8 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
         if (is_done[b] && indices[b] > -1)
         {
           gen_str[b] += "\n";
-          // strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
-          // free(prompt_tokens[b]);        
+          strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
+          free(prompt_tokens[b]);        
           fprintf(stderr, "\nThread %d DONE Request %d - Num done: %d\n", gid, indices[b], n_done + 1);
           indices[b] = -1;
           is_done[b] = false;
@@ -1382,11 +1382,11 @@ int main(int argc, char *argv[]) {
     // if (transformer.config.n_layers <= 32)
       // num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     // else
-    if (transformer.config.n_layers >= 80)
+    if (transformer.config.n_layers == 80)
       num_gen_tokens = test_70B(&transformer, &tokenizer, tokenizer_path, &requests, batch);
-    else if (transformer.config.n_layers >= 40)
+    if (transformer.config.n_layers == 40)
       num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch);
-    else
+    if (transformer.config.n_layers < 40)
       num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     end = time_in_ms();
 
