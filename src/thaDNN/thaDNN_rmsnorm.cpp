@@ -4,6 +4,7 @@
 #define MAX_BLOCK_SIZE 1024
 
 __device__ float warp_reduce_sum(float val) {
+    #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
         val += __shfl_xor(val, offset);
     return val;

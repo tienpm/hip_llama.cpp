@@ -682,7 +682,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // You should parallelize and optimize from this function exploiting multiple GPUs
 
 
-int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size=1) {
+int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size) {
   // Count the number of the generated tokens
   int gen_cnt = 0;
 
@@ -695,8 +695,9 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
 
   int n_devices = 0;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
+  fprintf(stderr, "DATA PARALLELISM %d\n");
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
-  batch_size = 1;
+  fprintf(stderr, "Batch Size %d\n", batch_size);
   int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
 
@@ -764,8 +765,6 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
       // assgin new request to GPU
       for(int b=0 ; b<batch_size ; ++b) {
         // if there exist next request
-        if (indices[b] != -1)
-          ++gen_cnt;
         if (indices[b] == -1) {
           // fprintf(stderr, "CP1.5\n");
           omp_set_lock(&idx_lock);
@@ -774,7 +773,7 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
           omp_unset_lock(&idx_lock);
           if (indices[b] >= requests->num_reqs) {
             indices[b] = -1;
-            continue;
+            break;
           }
 
           fprintf(stderr, "\nDevice %d Request %d\n", gid, indices[b]);
@@ -802,27 +801,28 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
       tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
 
       // advance the state machine
-      for(int b=0 ; b<batch_size ; ++b)
-      if (indices[b] > -1) {
-        if (pos[b] < num_prompt_tokens[b] - 1) {
-          next[b] = prompt_tokens[b][pos[b] + 1];
-        } else {
-          next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
-        }
+      for(int b = 0 ; b < batch_size ; ++b) {
+        if (indices[b] > -1) {
+          if (pos[b] < num_prompt_tokens[b] - 1) {
+            next[b] = prompt_tokens[b][pos[b] + 1];
+          } else {
+            next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
+          }
 
-        if (next[b] == 1 || next[b] == 2) {
-          is_done[b] = true;
-        }
-        else {
-          char* piece = decode(&private_tokenizer, token[b], next[b]);
-          // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-          // fflush(stdout);
-          append_str(piece, gen_str[b]);
-          token[b] = next[b];
-
-          ++pos[b]; // TODO: update `++pos` positon
-          if (pos[b] >= steps[b]) {
+          if (next[b] == 1 || next[b] == 2) {
             is_done[b] = true;
+          }
+          else {
+            char* piece = decode(&private_tokenizer, token[b], next[b]);
+            // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+            // fflush(stdout);
+            append_str(piece, gen_str[b]);
+            token[b] = next[b];
+
+            ++pos[b]; // TODO: update `++pos` positon
+            if (pos[b] >= steps[b]) {
+              is_done[b] = true;
+            }
           }
         }
       }
@@ -893,7 +893,7 @@ int test_pipeline_parallelism(Transformer *transformer, Tokenizer *tokenizer, ch
   long copy_start, copy_end;
   copy_start = time_in_ms();
   #pragma omp parallel for num_threads(n_devices)
-  for(int d_id=0 ; d_id < n_devices ; ++d_id) {
+  for (int d_id = 0 ; d_id < n_devices ; ++d_id) {
     CHECK_HIP(hipSetDevice(d_id));
     device_host_thread[d_id] = 0;
     omp_init_lock(&device_locks[d_id]);
@@ -1029,8 +1029,7 @@ int test_pipeline_parallelism(Transformer *transformer, Tokenizer *tokenizer, ch
           if (next[b] == 1 || next[b] == 2) {
             is_done[b] = true;
           }
-          else
-          {
+          else {
             char* piece = decode(&private_tokenizer, token[b], next[b]);
             // fprintf(stderr, "\nprompts: %d - token_id: %d\n", indices[b], next[b]);
             append_str(piece, gen_str[b]);
@@ -1192,8 +1191,8 @@ int main(int argc, char *argv[]) {
     // {
     long start, end;
     start = time_in_ms();
-    // int num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
-    int num_gen_tokens = test_pipeline_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    int num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    // int num_gen_tokens = test_pipeline_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     end = time_in_ms();
 
     // Your goal is to achieve best throughput(=reduce elapsed time)! 

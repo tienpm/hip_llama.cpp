@@ -326,6 +326,10 @@ thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle
         int next_device = gid + 1;
         if (next_device < n_devices) {
             CHECK_HIP(hipMemcpy(s_batch[next_device]->x, s_batch[gid]->x, batch_size * dim * sizeof(float), hipMemcpyDeviceToDevice));
+            /* Try mem copy peer*/
+            // hipDeviceEnablePeerAccess(next_device, 0); // Enable access from current device to next device
+            // CHECK_HIP(hipMemcpyPeer(s_batch[next_device]->x, next_device, s_batch[gid]->x, gid, batch_size * dim * sizeof(float)));
+
             // CHECK_HIP(hipDeviceSynchronize());
         } else {
             thablas_status = thaDNN_s_rmsnorm_v2_batch(handle[gid], batch_size, s_batch[gid]->x, s_batch[gid]->x, w[gid]->rms_final_weight, dim, dim);

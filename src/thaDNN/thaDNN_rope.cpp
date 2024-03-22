@@ -44,8 +44,7 @@ __global__ void thaDNN_s_rope_kernel(int dim, int head_size, int kv_dim, int pos
 // input: q, k allocated on device
 // [dim] % 2 = 0
 thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) {
-    if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr || handle.current_gpu_id < 0)
-    {
+    if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr || handle.current_gpu_id < 0) {
         fprintf(stderr, "THABLAS RoPE_relative_positional_encoding ERROR: INVALID ARGUMENT\n");
         return THABLAS_STATUS_ALLOC_FAILED;        
     }

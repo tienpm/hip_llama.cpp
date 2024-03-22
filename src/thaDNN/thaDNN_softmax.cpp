@@ -4,15 +4,14 @@
 #define WARP_SIZE 64
 #define MAX_BLOCK_SIZE 1024
 
-__device__ float warp_reduce_sum(float val)
-{
+__device__ float warp_reduce_sum(float val) {
+    #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
         val += __shfl_xor(val, offset);
     return val;
 }
 
-__device__ float block_reduce_sum(float val) 
-{
+__device__ float block_reduce_sum(float val) {
     static __shared__ float shared[MAX_BLOCK_SIZE / WARP_SIZE]; 
     int lane = threadIdx.x % WARP_SIZE;
     int wid = threadIdx.x / WARP_SIZE;

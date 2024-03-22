@@ -14,9 +14,11 @@
 #define MATRIX_CORE 0
 
 __device__ float warp_reduce_sum(float val) {
-    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
-        val += __shfl_xor(val, offset);
-    return val;
+  #pragma unroll
+  for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
+    val += __shfl_xor(val, offset);
+  
+  return val;
 }
 
 __device__ float block_reduce_sum(float val) {
@@ -45,19 +47,16 @@ __device__ float block_reduce_sum(float val) {
  * ===========================================================================
  */
 
-thablasStatus_t thablasCreate(thablasHandle_t* handle)
-{
+thablasStatus_t thablasCreate(thablasHandle_t* handle) {
     int current_gpu_id;
     CHECK_HIP(hipGetDevice(&current_gpu_id));
     handle->current_gpu_id = current_gpu_id;
-
     // CHECK_HIP(hipStreamCreate(&handle->stream_));
 
     return THABLAS_STATUS_SUCCESS;
 }
 
-thablasStatus_t thablasDestroy(thablasHandle_t handle)
-{
+thablasStatus_t thablasDestroy(thablasHandle_t handle) {
     // 
     return THABLAS_STATUS_SUCCESS;
 }

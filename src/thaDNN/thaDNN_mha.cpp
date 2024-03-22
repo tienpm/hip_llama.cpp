@@ -4,6 +4,7 @@
 #define MAX_BLOCK_SIZE 1024
 
 __device__ float warp_reduce_sum(float val) {
+    #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) 
         val += __shfl_xor(val, offset);
     return val;
@@ -30,6 +31,7 @@ __device__ float block_reduce_sum(float val) {
 }
 
 __device__ float warp_reduce_max(float val) {
+  #pragma unroll
   for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
     val = std::max(val, __shfl_xor(val, offset));
   return val;
@@ -167,8 +169,7 @@ __global__ void thaDNN_s_multiheads_2_v1_batch_kernel(int n_batches, float* s_at
 // _s_ = single persion (float)
 // input: output, x allocated on device
 // input: size = 32000
-thablasStatus_t thaDNN_s_multiheads_2_v1_batch(thablasHandle_t handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads)
-{
+thablasStatus_t thaDNN_s_multiheads_2_v1_batch(thablasHandle_t handle, int n_batches, float* s_att_batch, int size_batch[], int seq_len, int n_heads) {
     // if (seq_len+n_heads+n_batches==0 || s_att_batch == nullptr || handle.current_gpu_id < 0)
     // {
     //     printf("THABLAS SOFTMAX BATCH ERROR: INVALID ARGUMENT\n"); fflush(stdout);
@@ -195,8 +196,7 @@ __global__ void thaDNN_s_multiheads_3_v1_batch_kernel(int pos[], int n_heads, fl
     float sum = 0.0f;
     float *att, *v, *xb;
     int pos_b = pos[b];
-    for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
-    {
+    for(int t = lx ; t < pos_b+1 ; t += blockDim.x) {
         att = s_att_batch + h * seq_len + b * n_heads *  seq_len;
         float a = att[t];
 
@@ -264,7 +264,7 @@ __global__ void thaDNN_s_multiheads_1_v2_batch_kernel(int pos[], int n_heads, in
     }
 
     score = block_reduce_sum(score);
-    if (lx==0) {
+    if (lx == 0) {
         att[t] = score / sqrtf(head_size);
     }
 }
