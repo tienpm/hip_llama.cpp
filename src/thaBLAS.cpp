@@ -259,34 +259,22 @@ thablasStatus_t thaDNN_s_matmulvec_v2(thablasHandle_t* handle, float *C, float *
 // [B and C are col major
 __global__ void thaBLAS_s_matmul_reduction_kernel(float *A, float *B, float *C, int M, int N, int K)
 {
-    int gx = blockIdx.x;
+    int i = blockIdx.x;
     int j = blockIdx.y;
     int lx = threadIdx.x;
+    float sum = 0.0f;
 
     float *Ccol = C + j * M;
     float *Bcol = B + j * K;
-
-    float sum;
-    int i, k;
-    extern __shared__ float shared_B[];
-
-    for (k=lx ; k<K ; k+=blockDim.x)
-        shared_B[k] = Bcol[k];
-    __syncthreads();
-
-    for(int ii=0 ; ii<4 ; ++ii)
+    #pragma unroll
+    for (int k=lx ; k<K ; k+=blockDim.x)
     {
-        i = (gx*4 + ii);
-        sum = 0.0f;
-        for (k=lx ; k<K ; k+=blockDim.x)
-        {
-            sum += A[i*K + k] * shared_B[k];
-        }
-        sum = warp_reduce_sum(sum);
-        if (lx == 0)
-        {
-            Ccol[i] = sum;
-        }
+        sum += A[i*K + k] * Bcol[k];
+    }
+    sum = block_reduce_sum(sum);
+    if (lx == 0)
+    {
+        Ccol[i] = sum;
     }
 }
 
@@ -301,10 +289,10 @@ thablasStatus_t thaBLAS_s_matmul_reduction(thablasHandle_t* handle, float *A, fl
     // }
 
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
-    dim3 blockDim(64);
-    dim3 gridDim(M/4, N);
+    dim3 blockDim(1024);
+    dim3 gridDim(M, N);
 
-    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, K * sizeof(float), handle->calc_stream, A, B, C, M, N ,K);
+    hipLaunchKernelGGL(thaBLAS_s_matmul_reduction_kernel, gridDim, blockDim, 0, handle->calc_stream, A, B, C, M, N ,K);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

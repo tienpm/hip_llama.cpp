@@ -855,7 +855,7 @@ int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *
     }
   }
 
-  gen_cnt = 0; // TODO: remove this comment before submission
+  // gen_cnt = 0; // TODO: remove this comment before submission
 
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     free_sampler(&samplers[idx]);
@@ -1255,7 +1255,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     }
   } // end host_thread parallel
 
-  // gen_cnt = 0; // TODO: remove this comment before submission
+  gen_cnt = 0; // TODO: remove this comment before submission
 
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     free_sampler(&samplers[idx]);
@@ -1384,8 +1384,10 @@ int main(int argc, char *argv[]) {
     // else
     if (transformer.config.n_layers >= 80)
       num_gen_tokens = test_70B(&transformer, &tokenizer, tokenizer_path, &requests, batch);
-    else 
+    else if (transformer.config.n_layers >= 40)
       num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    else
+      num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     end = time_in_ms();
 
     // Your goal is to achieve best throughput(=reduce elapsed time)! 

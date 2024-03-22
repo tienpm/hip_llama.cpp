@@ -198,18 +198,22 @@ __global__ void thaDNN_s_multiheads_3_v2_batch_kernel(int pos[], int n_heads, in
     int b = blockIdx.z;
 
     float sum = 0.0f;
-    float *att, *v, *xb;
+    float *att = s_att_batch + h * n_words + b * n_heads *  n_words;
+    float *v, *xb;
     int pos_b = pos[b];
+
+    extern __shared__ float shared_a[];
+    #pragma unroll
+    for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
+        shared_a[t] = att[t];
+    __syncthreads();
+
+    float* s_v = s_value_cache_batch + b * kv_dim + (h / kv_mul) * head_size;
+    #pragma unroll
     for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
     {
-        att = s_att_batch + h * n_words + b * n_heads *  n_words;
-        float a = att[t];
-
-        // v = s_value_cache_batch + loff + t * kv_dim + (h / kv_mul) * head_size + b * n_layers * seq_len * kv_dim;
-        // v = s_value_cache_batch + t * (pipe_size * batch_size * kv_dim) + l * batch_size * kv_dim + b * kv_dim + (h / kv_mul) * head_size;
-        v = s_value_cache_batch + t * batch_size * kv_dim + b * kv_dim + (h / kv_mul) * head_size;
-
-        sum += a * v[i];
+        v = s_v + t * batch_size * kv_dim;
+        sum += shared_a[t] * v[i];
     }
     sum = block_reduce_sum(sum);
     if (lx == 0)
@@ -231,7 +235,7 @@ thablasStatus_t thaDNN_s_multiheads_3_v2_batch(thablasHandle_t* handle, int batc
     dim3 blockDim(1024);
     dim3 gridDim(head_size, n_heads, batch_size);
     // CAUTION: careful playing with [pos]. 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v2_batch_kernel, gridDim, blockDim, 0, handle->calc_stream, pos_d, n_heads, batch_size, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, n_words, kv_dim, kv_mul, dim, pipe_size);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v2_batch_kernel, gridDim, blockDim, n_words * sizeof(float), handle->calc_stream, pos_d, n_heads, batch_size, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, n_words, kv_dim, kv_mul, dim, pipe_size);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
@@ -377,16 +381,22 @@ __global__ void thaDNN_s_multiheads_3_v1_batch_kernel(int pos[], int n_heads, fl
     int b = blockIdx.z;
 
     float sum = 0.0f;
-    float *att, *v, *xb;
+    float *att = s_att_batch + h * seq_len + b * n_heads *  seq_len;
+    float *v, *xb;
     int pos_b = pos[b];
+
+    extern __shared__ float shared_a[];
+    #pragma unroll
+    for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
+        shared_a[t] = att[t];
+    __syncthreads();
+
+    float* s_v = s_value_cache_batch + loff + (h / kv_mul) * head_size + b * n_layers * seq_len * kv_dim;
+    #pragma unroll
     for(int t=lx ; t<pos_b+1 ; t+=blockDim.x)
     {
-        att = s_att_batch + h * seq_len + b * n_heads *  seq_len;
-        float a = att[t];
-
-        v = s_value_cache_batch + loff + t * kv_dim + (h / kv_mul) * head_size + b * n_layers * seq_len * kv_dim;
-
-        sum += a * v[i];
+        v = s_v + t * kv_dim;
+        sum += shared_a[t] * v[i];
     }
     sum = block_reduce_sum(sum);
     if (lx == 0)
@@ -409,7 +419,7 @@ thablasStatus_t thaDNN_s_multiheads_3_v1_batch(thablasHandle_t* handle, int n_ba
     dim3 blockDim(1024);
     dim3 gridDim(head_size, n_heads, n_batches);
     // CAUTION: careful playing with [pos]. 
-    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v1_batch_kernel, gridDim, blockDim, 0, handle->calc_stream, pos_d, n_heads, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, seq_len, loff, kv_dim, kv_mul, dim, n_layers);
+    hipLaunchKernelGGL(thaDNN_s_multiheads_3_v1_batch_kernel, gridDim, blockDim, seq_len * sizeof(float), handle->calc_stream, pos_d, n_heads, s_xb_batch, s_att_batch, s_value_cache_batch, head_size, seq_len, loff, kv_dim, kv_mul, dim, n_layers);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
