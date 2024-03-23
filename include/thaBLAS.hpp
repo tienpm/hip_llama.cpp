@@ -18,8 +18,7 @@ typedef enum
     THABLAS_STATUS_UNKNOWN           = 11, /**<  back-end returned an unsupported status code */
 } thablasStatus_t;
 
-typedef struct 
-{
+typedef struct {
     int current_gpu_id;
     hipStream_t calc_stream;
     hipStream_t copy_stream;

@@ -25,7 +25,9 @@ thablasStatus_t thaDNN_s_swiglu(thablasHandle_t* handle, float *hb, float *hb2, 
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((hidden_dim + blockDim.x - 1) / blockDim.x);
-    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, gridDim, blockDim, 0, handle->calc_stream, hb, hb2, hidden_dim);
+    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, 
+                       gridDim, blockDim, 0, handle->calc_stream, 
+                       hb, hb2, hidden_dim);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
