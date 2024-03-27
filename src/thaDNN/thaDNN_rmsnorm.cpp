@@ -1,4 +1,5 @@
 #include "thaDNN/thaDNN_rmsnorm.hpp"
+#include <omp.h>
 
 #define WARP_SIZE 64
 #define MAX_BLOCK_SIZE 1024

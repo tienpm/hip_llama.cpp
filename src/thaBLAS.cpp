@@ -169,6 +169,25 @@ thablasStatus_t thaBLAS_s_matmul(thablasHandle_t handle, int m, int n, int k, fl
     return THABLAS_STATUS_SUCCESS;
 }
 
+// __global__ void thaBLAS_s_matmul_batch_kernel(float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos[], int C_batch_size, int B_batch_size) {
+//     int gx = blockIdx.x;
+//     int b = blockIdx.y;
+//     int lx = threadIdx.x;
+//     float sum = 0.0f;
+//
+//     float *C = C_batch + Coff + has_pos * pos[b] + b * C_batch_size;
+//     float *B = B_batch + b * B_batch_size;
+//     for (int k=lx ; k<K ; k+=blockDim.x) {
+//         sum += A[gx*K + k] * B[k];
+//     }
+//
+//     sum = block_reduce_sum(sum);
+//
+//     if (lx == 0) {
+//         C[gx] = sum;
+//     }
+// }
+
 __global__ void thaBLAS_s_matmul_batch_kernel(float *C_batch, float *B_batch, float *A, int K, int M, int Coff, int has_pos, int pos[], int C_batch_size, int B_batch_size) {
     int gx = blockIdx.x;
     int b = blockIdx.y;
@@ -267,9 +286,8 @@ __global__ void thaBLAS_s_matmul_reduction_kernel(float *A, float *B, float *C, 
 
     float *Ccol = C + j * M;
     float *Bcol = B + j * K;
-    #pragma unroll
-    for (int k=lx ; k<K ; k+=blockDim.x) {
-        sum += A[i*K + k] * Bcol[k];
+    for (int k = lx ; k < K ; k += blockDim.x) {
+        sum += A[i * K + k] * Bcol[k];
     }
 
     sum = block_reduce_sum(sum);

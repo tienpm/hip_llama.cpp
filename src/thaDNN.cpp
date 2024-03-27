@@ -10,7 +10,8 @@
 #include <omp.h>
 
 
-thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int batch_size, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* logits_host) {
+thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int batch_size, Config *p, TransformerWeights* w, 
+                                       RunState* s_batch, int token[], int pos[], float* logits_host) {
     float *x[batch_size];
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads; 

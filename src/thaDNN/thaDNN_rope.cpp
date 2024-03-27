@@ -1,4 +1,5 @@
 #include "thaDNN/thaDNN_rmsnorm.hpp"
+#include <omp.h>
 
 #define ROUND_UP(N, S)((N + S - 1)/ S)
 

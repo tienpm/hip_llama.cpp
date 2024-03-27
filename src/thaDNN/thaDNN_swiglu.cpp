@@ -1,4 +1,5 @@
 #include "thaDNN/thaDNN_swiglu.hpp"
+#include <omp.h>
 
 // '_s_' = single persion (float)
 __global__ void thaDNN_s_swiglu_kernel(float* hb, float*hb2, int hidden_dim) {

@@ -1,5 +1,6 @@
 #include "thaDNN/thaDNN_softmax.hpp"
 #include <cstdio>
+#include <omp.h>
 
 #define WARP_SIZE 64
 #define MAX_BLOCK_SIZE 1024
