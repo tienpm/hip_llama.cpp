@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <omp.h>
-#include <mutex>
+#include <pthread.h>
 
 #include <fstream>
 #include <iostream>
@@ -682,7 +682,213 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // ----------------------------------------------------------------------------
 // You should parallelize and optimize from this function exploiting multiple GPUs
 
-int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size=1) {
+// pthread_mutex_t seq_mutex = PTHREAD_MUTEX_INITIALIZER;
+// struct ThreadArg {
+//   int tid;
+//   Transformer *transformer;
+//   Tokenizer *tokenizer;
+//   char *tokenizer_path;
+//   Requests * requests;
+//   int batch_size;
+//   int vocab_size;
+// };
+//
+// void* pthread_infer_data_parallelism(void* args) {
+//   ThreadArg local_args = (ThreadArg*)args;
+//
+//   int gid = local_args->tid;
+//
+//   fprintf(stderr, "\nDevice ID %d\n", gid);
+//   CHECK_HIP(hipSetDevice(gid));
+//
+//   Tokenizer private_tokenizer;
+//   build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
+//
+//   TransformerWeights *weight_d;
+//   RunState *state_d_batch;
+//
+//   float *logits_host;
+//   CHECK_HIP(hipHostMalloc(&logits_host, batch_size * vocab_size * sizeof(float), hipHostMallocNonCoherent));
+//
+//   thablasHandle_t handle;
+//   thablasCreate(&handle);
+//   CHECK_HIP(hipDeviceSynchronize());
+//   long load_model_start, load_model_end;
+//   load_model_start = time_in_ms();
+//   copy_weight_to_device(transformer, weight_d);
+//   CHECK_HIP(hipDeviceSynchronize());
+//   load_model_end = time_in_ms();
+//   fprintf(stdout, "\nLoad model time %f\n", (double)(load_model_end-load_model_start)/1000);
+//   alloc_state_to_device_batch(transformer, state_d_batch, batch_size);
+//
+//
+//   int batch_token_id[batch_size];
+//   for(int seq_id = 0 ; seq_id < batch_size ; seq_id++)
+//     batch_token_id[seq_id] = -1;
+//
+//   std::string gen_str[batch_size];
+//   char *prompt[batch_size];
+//   int *prompt_tokens[batch_size];
+//   int num_prompt_tokens[batch_size];
+//
+//   // long start = 0; // used to time our code, only initialized after first iteration
+//   int next[batch_size];     // will store the next token in the sequence
+//   int token[batch_size];    // kick off with the first token in the prompt
+//   int pos[batch_size];      // position in the sequence
+//   int steps[batch_size];    // max sequence length
+//   bool is_done[batch_size];
+//
+//   thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
+//   gen_cnt_each_device[gid] = 0;
+//
+//   while (1) {
+//
+//     // assgin new request to GPU
+//     int num_active_request = 0;
+//     for(int seq_id = 0 ; seq_id < batch_size ; seq_id++) {
+//       // if there exist next request
+//       if (batch_token_id[seq_id] == -1) {
+//         // omp_set_lock(&idx_lock);
+//         // batch_token_id[seq_id] = next_idx;
+//         // if (next_idx < requests->num_reqs) ++next_idx;
+//         // omp_unset_lock(&idx_lock);
+//         #pragma omp critical
+//         {
+//           batch_token_id[seq_id] = next_idx;
+//           if (next_idx < requests->num_reqs) ++next_idx;
+//         }
+//         if (batch_token_id[seq_id] >= requests->num_reqs) {
+//           batch_token_id[seq_id] = -1;
+//           num_active_request += 1;
+//           continue;
+//         }
+//
+//         fprintf(stderr, "\nDevice %d Request %d\n", gid, batch_token_id[seq_id]);
+//         gen_str[seq_id] = "";
+//         prompt[seq_id] = get_str_req_ptr(requests, batch_token_id[seq_id]);
+//         prompt_tokens[seq_id] = (int*)malloc((strlen(prompt[seq_id])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+//
+//         // encode the (string) prompt into tokens sequence
+//         num_prompt_tokens[seq_id] = 0;
+//         encode(&private_tokenizer, prompt[seq_id], 1, 0, prompt_tokens[seq_id], &num_prompt_tokens[seq_id]);
+//         if (num_prompt_tokens[seq_id] < 1) {
+//           fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+//           exit(EXIT_FAILURE);
+//         }
+//
+//         token[seq_id] = prompt_tokens[seq_id][0]; // kick off with the first token in the prompt
+//         pos[seq_id] = 0; // position in the sequence
+//         steps[seq_id] = requests->max_seq_len; // max sequence length
+//         is_done[seq_id] = false;
+//         // logits_d[seq_id] = nullptr;
+//       }
+//     }
+//
+//     if (num_active_request == batch_size)
+//       break;
+//
+//     long long batch_infer_start, batch_infer_end;
+//     batch_infer_start = time_in_ms();
+//
+//     tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, 
+//                                         state_d_batch, token, pos, logits_host);
+//     batch_infer_end = time_in_ms();
+//     fprintf(stderr, "\nInfer time at device %d: %f\n", gid, (double)(batch_infer_end - batch_infer_start)/1000);
+//     // for(int b=0 ; b<batch_size ; ++b)
+//     //   CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+//     // CHECK_HIP(hipMemcpy(logits_host, logits_d, batch_size * vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+//     CHECK_HIP(hipDeviceSynchronize());
+//
+//     // advance the state machine
+//     for(int seq_id = 0 ; seq_id < batch_size ; seq_id++) {
+//       if (batch_token_id[seq_id] > -1) {
+//         if (pos[seq_id] < num_prompt_tokens[seq_id] - 1) {
+//           next[seq_id] = prompt_tokens[seq_id][pos[seq_id] + 1];
+//         } else {
+//           next[seq_id] = sample(&samplers[batch_token_id[seq_id]], logits_host + seq_id * vocab_size);
+//         }
+//         pos[seq_id] += 1;
+//
+//         if (next[seq_id] == 1 || next[seq_id] == 2) {
+//           is_done[seq_id] = true;
+//         }
+//         else {
+//           char* piece = decode(&private_tokenizer, token[seq_id], next[seq_id]);
+//           // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+//           // fflush(stdout);
+//           append_str(piece, gen_str[seq_id]);
+//           token[seq_id] = next[seq_id];
+//           if (pos[seq_id] >= steps[seq_id]) {
+//             is_done[seq_id] = true;
+//           }
+//         }
+//       }
+//     }
+//     
+//     // de-assgin the requests
+//     for(int seq_id = 0 ; seq_id < batch_size ; seq_id++) {
+//       if (is_done[seq_id] && batch_token_id[seq_id] > -1) {
+//         gen_str[seq_id] += "\n";
+//         strcpy(get_str_gen_ptr(requests, batch_token_id[seq_id]), gen_str[seq_id].c_str());
+//         free(prompt_tokens[seq_id]);        
+//         fprintf(stderr, "\nThread %d DONE Request %d \n", gid, batch_token_id[seq_id]);
+//         batch_token_id[seq_id] = -1;
+//         is_done[seq_id] = false;
+//         // Update generated tokens
+//         gen_cnt_each_device[gid] += (pos[seq_id] - 1);
+//         pos[seq_id] = 0;
+//         token[seq_id] = 0;
+//
+//         // omp_set_lock(&n_done_lock);
+//         // ++n_done;
+//         // omp_unset_lock(&n_done_lock);
+//       }
+//     }
+//
+//     // if (start == 0) { start = time_in_ms();}
+//   } 
+// }
+
+// int test_data_parallelism_pthread(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size) {
+//   // Count the number of the generated tokens
+//   int gen_cnt = 0;
+//
+//   // Avoid randomness to generate tokens for batch input
+//   // Each input request has its Sampler each
+//   Sampler samplers[requests->num_reqs];
+//   for(int idx = 0; idx < requests->num_reqs; idx++) {
+//     build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
+//   }
+//
+//   int n_devices = 0;
+//   CHECK_HIP(hipGetDeviceCount(&n_devices));
+//   fprintf(stderr, "\n DATA PARALLELISM WITH PTHREAD \n");
+//   fprintf(stderr, "\n Num Devices %d\n", n_devices);
+//   fprintf(stderr, "\n Batch Size %d\n", batch_size);
+//   // batch_size = 2;
+//   int n_layers = transformer->config.n_layers;
+//   int vocab_size = transformer->config.vocab_size;
+//
+//   int next_idx = 0;
+//   int n_done = 0;
+//   int gen_cnt_each_device[n_devices];
+//
+//   // BEGIN PARALLEL
+//
+//
+//   // gen_cnt = 0; // TODO: remove this comment before submission
+//
+//   for(int idx = 0; idx < requests->num_reqs; idx++) {
+//     free_sampler(&samplers[idx]);
+//   }
+//
+//   for(int gid = 0; gid < n_devices; ++gid)
+//     gen_cnt += gen_cnt_each_device[gid];
+//
+//   return gen_cnt;
+// }
+
+int test_data_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size) {
   // Count the number of the generated tokens
   int gen_cnt = 0;
 
@@ -694,40 +900,439 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
   }
 
   int n_devices = 0;
-  batch_size = 1;
-  int n_flows = 4;
   CHECK_HIP(hipGetDeviceCount(&n_devices));
+  fprintf(stderr, "\n DATA PARALLELISM \n");
   fprintf(stderr, "\n Num Devices %d\n", n_devices);
-  int n_layers = transformer->config.n_layers;
+  fprintf(stderr, "\n Batch Size %d\n", batch_size);
+  // batch_size = 2;
+  // int n_layers = transformer->config.n_layers;
   int vocab_size = transformer->config.vocab_size;
-  int pipe_size = n_layers / n_devices;
-  
-  std::mutex mtx_idx, mtx_n_done;
+
+  // omp_lock_t idx_lock, n_done_lock;
+  // omp_init_lock(&idx_lock);
+  // omp_init_lock(&n_done_lock);
   int next_idx = 0;
   int n_done = 0;
-  int flow_status[n_flows], device_flow[n_devices];
-  std::mutex device_mtx[n_devices];
-  int gen_cnt_flow[n_flows];
+
+  // BEGIN PARALLEL
+
+  #pragma omp parallel for num_threads(n_devices) reduction (+:gen_cnt)
+  for (int gid = 0; gid < n_devices; gid++) {
+    // int gid = omp_get_thread_num();
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(gid, &cpu_set);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+    fprintf(stderr, "\nDevice ID %d\n", gid);
+    CHECK_HIP(hipSetDevice(gid));
+
+    Tokenizer private_tokenizer;
+    build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
+
+    TransformerWeights *weight_d;
+    RunState *state_d_batch;
+
+    float *logits_host;
+    CHECK_HIP(hipHostMalloc(&logits_host, batch_size * vocab_size * sizeof(float), hipHostMallocNonCoherent));
+
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    CHECK_HIP(hipDeviceSynchronize());
+    long load_model_start, load_model_end;
+    load_model_start = time_in_ms();
+    copy_weight_to_device(transformer, weight_d);
+    CHECK_HIP(hipDeviceSynchronize());
+    load_model_end = time_in_ms();
+    fprintf(stdout, "\nLoad model time thread %d: %f\n", gid, (double)(load_model_end-load_model_start)/1000);
+    alloc_state_to_device_batch(transformer, state_d_batch, batch_size);
+
+
+    int batch_token_id[batch_size];
+    for(int seq_id = 0 ; seq_id < batch_size ; seq_id++)
+      batch_token_id[seq_id] = -1;
+
+    std::string gen_str[batch_size];
+    char *prompt[batch_size];
+    int *prompt_tokens[batch_size];
+    int num_prompt_tokens[batch_size];
+
+    // long start = 0; // used to time our code, only initialized after first iteration
+    int next[batch_size];     // will store the next token in the sequence
+    int token[batch_size];    // kick off with the first token in the prompt
+    int pos[batch_size];      // position in the sequence
+    int steps[batch_size];    // max sequence length
+    bool is_done[batch_size];
+
+    thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
+
+    while (1) {
+
+      // assgin new request to GPU
+      int num_active_request = 0;
+      for(int seq_id = 0 ; seq_id < batch_size ; seq_id++) {
+        // if there exist next request
+        if (batch_token_id[seq_id] == -1) {
+          // omp_set_lock(&idx_lock);
+          // batch_token_id[seq_id] = next_idx;
+          // if (next_idx < requests->num_reqs) ++next_idx;
+          // omp_unset_lock(&idx_lock);
+          #pragma omp critical
+          {
+            batch_token_id[seq_id] = next_idx;
+            if (next_idx < requests->num_reqs) ++next_idx;
+          }
+          if (batch_token_id[seq_id] >= requests->num_reqs) {
+            batch_token_id[seq_id] = -1;
+            num_active_request += 1;
+            continue;
+          }
+
+          fprintf(stderr, "\nDevice %d - seq id %d in batch, Request %d\n", gid, seq_id, batch_token_id[seq_id]);
+          gen_str[seq_id] = "";
+          prompt[seq_id] = get_str_req_ptr(requests, batch_token_id[seq_id]);
+          prompt_tokens[seq_id] = (int*)malloc((strlen(prompt[seq_id])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+
+          // encode the (string) prompt into tokens sequence
+          num_prompt_tokens[seq_id] = 0;
+          encode(&private_tokenizer, prompt[seq_id], 1, 0, prompt_tokens[seq_id], &num_prompt_tokens[seq_id]);
+          if (num_prompt_tokens[seq_id] < 1) {
+            fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+            exit(EXIT_FAILURE);
+          }
+
+          token[seq_id] = prompt_tokens[seq_id][0]; // kick off with the first token in the prompt
+          pos[seq_id] = 0; // position in the sequence
+          steps[seq_id] = requests->max_seq_len; // max sequence length
+          is_done[seq_id] = false;
+          // logits_d[seq_id] = nullptr;
+        }
+      }
+
+      if (num_active_request == batch_size)
+        break;
+
+      // long long batch_infer_start, batch_infer_end;
+      // batch_infer_start = time_in_ms();
+
+      tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, 
+                                          state_d_batch, token, pos, logits_host);
+      // batch_infer_end = time_in_ms();
+      // fprintf(stderr, "\nInfer time at device %d: %f\n", gid, (double)(batch_infer_end - batch_infer_start)/1000);
+      // for(int b=0 ; b<batch_size ; ++b)
+      //   CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      // CHECK_HIP(hipMemcpy(logits_host, logits_d, batch_size * vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      CHECK_HIP(hipDeviceSynchronize());
+
+      // advance the state machine
+      for(int seq_id = 0 ; seq_id < batch_size ; seq_id++) {
+        if (batch_token_id[seq_id] > -1) {
+          if (pos[seq_id] < num_prompt_tokens[seq_id] - 1) {
+            next[seq_id] = prompt_tokens[seq_id][pos[seq_id] + 1];
+          } else {
+            next[seq_id] = sample(&samplers[batch_token_id[seq_id]], logits_host + seq_id * vocab_size);
+          }
+          pos[seq_id] += 1;
+
+          if (next[seq_id] == 1 || next[seq_id] == 2) {
+            is_done[seq_id] = true;
+          }
+          else {
+            char* piece = decode(&private_tokenizer, token[seq_id], next[seq_id]);
+            // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+            // fflush(stdout);
+            append_str(piece, gen_str[seq_id]);
+            token[seq_id] = next[seq_id];
+            if (pos[seq_id] >= steps[seq_id]) {
+              is_done[seq_id] = true;
+            }
+          }
+        }
+      }
+      
+      // de-assgin the requests
+      for(int seq_id = 0 ; seq_id < batch_size ; seq_id++) {
+        if (is_done[seq_id] && batch_token_id[seq_id] > -1) {
+          gen_str[seq_id] += "\n";
+          strcpy(get_str_gen_ptr(requests, batch_token_id[seq_id]), gen_str[seq_id].c_str());
+          free(prompt_tokens[seq_id]);        
+          fprintf(stderr, "\nThread %d DONE Request %d \n", gid, batch_token_id[seq_id]);
+          batch_token_id[seq_id] = -1;
+          is_done[seq_id] = false;
+          // Update generated tokens
+          gen_cnt += (pos[seq_id] - 1);
+          pos[seq_id] = 0;
+          token[seq_id] = 0;
+
+          // omp_set_lock(&n_done_lock);
+          // ++n_done;
+          // omp_unset_lock(&n_done_lock);
+        }
+      }
+
+      // if (start == 0) { start = time_in_ms();}
+    }
+  }
+
+  // gen_cnt = 0; // TODO: remove this comment before submission
+
+  for(int idx = 0; idx < requests->num_reqs; idx++) {
+    free_sampler(&samplers[idx]);
+  }
+
+  return gen_cnt;
+}
+
+int test_70B(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size=1) {
+  // Count the number of the generated tokens
+  int gen_cnt = 0;
+
+  // Avoid randomness to generate tokens for batch input
+  // Each input request has its Sampler each
+  Sampler samplers[requests->num_reqs];
+  for(int idx = 0; idx < requests->num_reqs; idx++) {
+    build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
+  }
+
+  int n_devices = 0;
+  CHECK_HIP(hipGetDeviceCount(&n_devices));
+  fprintf(stderr, "\n Num Devices %d\n", n_devices);
+  batch_size = 1; // always 1 for 70B
+  int n_layers = transformer->config.n_layers;
+  int vocab_size = transformer->config.vocab_size;
+
+  omp_lock_t idx_lock, n_done_lock;
+  omp_init_lock(&idx_lock);
+  omp_init_lock(&n_done_lock);
+  int next_idx = 0;
+  int n_done = 0;
+  int gen_cnt_each_device[n_devices];
+
+  fprintf(stderr, "\nLoading model...\n");
+  long load_model_start, load_model_end;
+  load_model_start = time_in_ms();
+  TransformerWeights* h_w[n_layers];
+  RunState* h_s[n_devices];
+  copy_transformer_to_host_70B(transformer, h_w, h_s, n_devices);
+  load_model_end = time_in_ms();
+  fprintf(stderr, "\nLoad model time %f\n", (double)(load_model_end-load_model_start)/1000);
+
+  // BEGIN PARALLEL
+
+  #pragma omp parallel num_threads(n_devices)
+  {
+    int gid = omp_get_thread_num();
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(gid, &cpu_set);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+    fprintf(stderr, "\nDevice ID %d\n", gid);
+    CHECK_HIP(hipSetDevice(gid));
+
+    Tokenizer private_tokenizer;
+    build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
+
+    TransformerWeights *d_w;
+    RunState *d_s;
+    // float *logits[batch_size];
+    // for(int b=0 ; b<batch_size ; ++b)
+    //   CHECK_HIP(hipHostMalloc(&logits[b], vocab_size * sizeof(float)));
+    float *logits_host;
+    CHECK_HIP(hipHostMalloc(&logits_host, batch_size * vocab_size * sizeof(float), hipHostMallocNonCoherent));
+
+    
+    thablasHandle_t handle;
+    thablasCreate(&handle);
+    alloc_weight_to_device_70B(transformer, d_w);
+    alloc_state_to_device_70B(transformer, d_s);
+    fprintf(stderr, "CP alloc\n");
+
+    int indices[batch_size];
+    for(int b=0 ; b<batch_size ; ++b)
+      indices[b] = -1;
+
+    std::string gen_str[batch_size];
+    char *prompt[batch_size];
+    int *prompt_tokens[batch_size];
+    int num_prompt_tokens[batch_size];
+
+    // long start = 0; // used to time our code, only initialized after first iteration
+    int next[batch_size]; // will store the next token in the sequence
+    int token[batch_size]; // kick off with the first token in the prompt
+    int pos[batch_size]; // position in the sequence
+    int steps[batch_size]; // max sequence length
+    bool is_done[batch_size];
+    float* logits_d[batch_size];
+
+    thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
+    gen_cnt_each_device[gid] = 0;
+
+    while (n_done < requests->num_reqs) {
+
+      for(int b=0 ; b<batch_size ; ++b) {
+        // assgin new request to GPU
+        if (indices[b] == -1) {
+          // fprintf(stderr, "CP1.5\n");
+          // if there exist next request
+          omp_set_lock(&idx_lock);
+          indices[b] = next_idx;
+          if (next_idx < requests->num_reqs) ++next_idx;
+          omp_unset_lock(&idx_lock);
+          if (indices[b] >= requests->num_reqs)
+          {
+            indices[b] = -1;
+            continue;
+          }
+
+          fprintf(stderr, "\nDevice %d Request %d\n", gid, indices[b]);
+          gen_str[b] = "";
+          prompt[b] = get_str_req_ptr(requests, indices[b]);
+          prompt_tokens[b] = (int*)malloc((strlen(prompt[b])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
+
+          // encode the (string) prompt into tokens sequence
+          num_prompt_tokens[b] = 0;
+          encode(&private_tokenizer, prompt[b], 1, 0, prompt_tokens[b], &num_prompt_tokens[b]);
+          if (num_prompt_tokens[b] < 1) {
+            fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+            exit(EXIT_FAILURE);
+          }
+
+          token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
+          pos[b] = 0; // position in the sequence
+          steps[b] = requests->max_seq_len; // max sequence length
+          if (n_layers >= 80) steps[b] = 1024;
+          is_done[b] = false;
+          logits_d[b] = nullptr;
+        }
+        ++gen_cnt_each_device[gid];
+      }
+
+      tha_status = thaDNN_s_forward_70B(handle, batch_size, &transformer->config, h_w, h_s[gid], d_w, d_s, token, pos, logits_host);
+      // for(int b=0 ; b<batch_size ; ++b)
+      //   CHECK_HIP(hipMemcpy(logits[b], logits_d[b], vocab_size * sizeof(float), hipMemcpyDeviceToHost));
+      // CHECK_HIP(hipDeviceSynchronize());
+
+      // fprintf(stderr, "CP5\n");
+
+      // advance the state machine
+      for(int b=0 ; b<batch_size ; ++b) {
+        if (indices[b] != -1)
+          ++gen_cnt;
+        if (indices[b] > -1) {
+          if (pos[b] < num_prompt_tokens[b] - 1) {
+            next[b] = prompt_tokens[b][pos[b] + 1];
+          } else {
+            next[b] = sample(&samplers[indices[b]], logits_host + b * vocab_size);
+          }
+          ++pos[b];
+
+          if (next[b] == 1 || next[b] == 2) {
+            is_done[b] = true;
+          }
+          else
+          {
+            char* piece = decode(&private_tokenizer, token[b], next[b]);
+            // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+            // fflush(stdout);
+            append_str(piece, gen_str[b]);
+            token[b] = next[b];
+
+            if (pos[b] >= steps[b]) {
+              is_done[b] = true;
+            }
+          }
+        }
+      }
+      
+      // de-assgin the requests
+      for(int b=0 ; b<batch_size ; ++b)
+      {
+        if (is_done[b] && indices[b] > -1)
+        {
+          gen_str[b] += "\n";
+          strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
+          free(prompt_tokens[b]);        
+          indices[b] = -1;
+          is_done[b] = false;
+          pos[b] = token[b] = 0;
+
+          omp_set_lock(&n_done_lock);
+          ++n_done;
+          omp_unset_lock(&n_done_lock);
+        }
+      }
+
+      // if (start == 0) { start = time_in_ms();}
+    }
+  }
+
+  // gen_cnt = 0; // TODO: remove this comment before submission
+
+  for(int idx = 0; idx < requests->num_reqs; idx++) {
+    free_sampler(&samplers[idx]);
+  }
+
+  for(int gid = 0; gid < n_devices; ++gid)
+    gen_cnt += gen_cnt_each_device[gid];
+  fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
+  return gen_cnt;
+}
+
+int test_pipeline_parallelism(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, Requests * requests, int batch_size) {
+  // Count the number of the generated tokens
+  int gen_cnt = 0;
+
+  // Avoid randomness to generate tokens for batch input
+  // Each input request has its Sampler each
+  Sampler samplers[requests->num_reqs];
+  for(int idx = 0; idx < requests->num_reqs; idx++) {
+    build_sampler(&samplers[idx], transformer->config.vocab_size, 1.0f, 0.9f, 314028);
+  }
+
+  int n_layers = transformer->config.n_layers;
+  int vocab_size = transformer->config.vocab_size;
+
+  int n_devices = 0;
+  // batch_size = 4;
+  // if (n_layers >= 40)
+  //   batch_size = 2;
+  int n_host_threads = 4;
+  int n_buffer_words = transformer->config.seq_len;
+
+  CHECK_HIP(hipGetDeviceCount(&n_devices));
+  fprintf(stderr, "\n PIPELINE PARALLELISM \n");
+  fprintf(stderr, "\n Num Devices %d\n", n_devices);
+  int pipe_size = n_layers / n_devices;
+  
+  omp_lock_t d_locks[n_devices];
+  omp_lock_t idx_lock, n_done_lock;
+  omp_init_lock(&idx_lock);
+  omp_init_lock(&n_done_lock);
+  int next_idx = 0;
+  int n_done = 0;
+  int gen_cnt_host_thread[n_host_threads];
 
   thablasStatus_t tha_status = THABLAS_STATUS_SUCCESS;
 
-  TransformerWeights* w_d[n_devices];
-  thablasHandle_t handle[n_devices];
+  TransformerWeights* d_w[n_devices];
+  long load_model_start, load_model_end;
+  load_model_start = time_in_ms();
+  #pragma omp parallel for num_threads(n_devices)
   for(int gid=0 ; gid<n_devices ; ++gid) {
     CHECK_HIP(hipSetDevice(gid));
-    device_flow[gid] = 0;
-    thablasCreate(&handle[gid]);
-    copy_transformer_weight_pipeline_to_device_batch(handle[gid], transformer, w_d[gid], pipe_size, gid, batch_size);
+    omp_init_lock(&d_locks[gid]);
+    copy_transformer_weight_pipeline_to_device_batch(transformer, d_w[gid], pipe_size, gid, batch_size);
   }
+  load_model_end = time_in_ms();
+  fprintf(stderr, "\nLoad model time %f\n", (double)(load_model_end-load_model_start)/1000);
 
-  #pragma omp parallel num_threads(n_flows) 
+  #pragma omp parallel num_threads(n_host_threads) 
   {
     int fid = omp_get_thread_num();
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
     CPU_SET(fid, &cpu_set);
     sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
-    fprintf(stderr, "\nFlow ID %d\n", fid);
+    fprintf(stderr, "\nThread ID %d\n", fid);
 
     float *logits_host;
     CHECK_HIP(hipHostMalloc(&logits_host, batch_size * vocab_size * sizeof(float)));
@@ -749,41 +1354,45 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
     bool is_done[batch_size];
     float* logits_d[batch_size];
 
-    flow_status[fid] = 0;
-    RunState* s_d_batch[n_devices];
+    RunState* d_s_batch[n_devices];
+    RunState* h_s_batch[n_devices];
+    thablasHandle_t handle[n_devices];
+    #pragma omp parallel for num_threads(n_devices)
     for(int gid=0 ; gid<n_devices ; ++gid) {
       CHECK_HIP(hipSetDevice(gid));
-      alloc_run_state_to_device_batch(handle[gid], transformer, s_d_batch[gid], pipe_size, gid, batch_size);
+      thablasCreate(&handle[gid]);
+      alloc_swap_run_state_on_host_batch(handle[gid], transformer, h_s_batch[gid], pipe_size, gid, batch_size, n_buffer_words);
+      alloc_swap_run_state_to_device_batch(handle[gid], transformer, d_s_batch[gid], pipe_size, gid, batch_size, n_buffer_words);
     }
 
     Tokenizer private_tokenizer;
     build_tokenizer(&private_tokenizer, tokenizer_path, vocab_size);
-    gen_cnt_flow[fid] = 0;
+    gen_cnt_host_thread[fid] = 0;
 
     while (1) {
       // check for stop condition
       bool stop = false;
-      mtx_n_done.lock();
+      omp_set_lock(&n_done_lock);
       stop = (n_done >= requests->num_reqs);
-      mtx_n_done.unlock();
+      omp_unset_lock(&n_done_lock);
       if (stop) break;
 
       // assgin new request to batch
       for(int b=0 ; b<batch_size ; ++b) {
         // if there exist next request
         if (indices[b] == -1) {
-          mtx_idx.lock();
+          omp_set_lock(&idx_lock);
           indices[b] = next_idx;
           if (next_idx < requests->num_reqs) ++next_idx;
-          mtx_idx.unlock();
+          omp_unset_lock(&idx_lock);
 
           if (indices[b] >= requests->num_reqs)
           {
             indices[b] = -1;
-            continue;
+            break;
           }
 
-          fprintf(stderr, "\nFlow %d Request %d\n", fid, indices[b]);
+          fprintf(stderr, "\nThread %d Request %d\n", fid, indices[b]);
           gen_str[b] = "";
           prompt[b] = get_str_req_ptr(requests, indices[b]);
           prompt_tokens[b] = (int*)malloc((strlen(prompt[b])+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
@@ -799,18 +1408,17 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           token[b] = prompt_tokens[b][0]; // kick off with the first token in the prompt
           pos[b] = 0; // position in the sequence
           steps[b] = requests->max_seq_len; // max sequence length
+          // steps[b] = 200;
           is_done[b] = false;
           logits_d[b] = nullptr;
         }
       }
-
-      // tha_status = thaDNN_s_forward_batch(handle, handle, handle, batch_size, &transformer->config, weight_d, state_d_batch, token, pos, logits_host);
-      tha_status = thaDNN_s_forward_batch_multiple_pipe_line(handle, fid, n_flows, n_devices, batch_size, &transformer->config, w_d, s_d_batch, token, pos, logits_host, flow_status, device_flow, device_mtx);
-
+      tha_status = thaDNN_s_forward_batch_multiple_pipe_line_layer_swap(handle, fid, n_host_threads, n_devices, batch_size, n_buffer_words, &transformer->config, d_w, d_s_batch, h_s_batch, token, pos, logits_host, d_locks);
       // advance the state machine
       for(int b = 0 ; b < batch_size; ++b) {
-        if (indices[b] > -1) 
-        {
+        if (indices[b] != -1)
+          ++gen_cnt;
+        if (indices[b] > -1) {
           if (pos[b] < num_prompt_tokens[b] - 1) {
             next[b] = prompt_tokens[b][pos[b] + 1];
           } else {
@@ -818,6 +1426,7 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
             // next[b] = prompt_tokens[b][1];
             // next[b] = sample(&samplers[indices[b]], logits[b]);
           }
+          ++pos[b];
 
           if (next[b] == 1 || next[b] == 2) {
             is_done[b] = true;
@@ -830,13 +1439,11 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
             // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
             // fflush(stdout);
             // fprintf(stderr, "%d %s\n", pos[b], piece);
-            ++pos[b];
             if (pos[b] >= steps[b]) {
               is_done[b] = true;
             }
           }
-          // ++gen_cnt;
-          ++gen_cnt_flow[fid];
+          ++gen_cnt_host_thread[fid];
         }
       }
       
@@ -848,29 +1455,30 @@ int test(Transformer *transformer, Tokenizer *tokenizer, char *tokenizer_path, R
           gen_str[b] += "\n";
           strcpy(get_str_gen_ptr(requests, indices[b]), gen_str[b].c_str());
           free(prompt_tokens[b]);
-          fprintf(stderr, "\nFlow %d DONE %d\n", fid, indices[b]);
+          fprintf(stderr, "\nThread %d DONE %d\n", fid, indices[b]);
           indices[b] = -1;
           is_done[b] = false;
           pos[b] = 0;
           token[b] = 0;
 
-          mtx_n_done.lock();
+          omp_set_lock(&n_done_lock);
           ++n_done;
-          mtx_n_done.unlock();
+          omp_unset_lock(&n_done_lock);
         }
       }
 
       // if (start == 0) { start = time_in_ms();}
     }
-  } // end flow parallel
+  } // end host_thread parallel
+
+  gen_cnt = 0; // TODO: remove this comment before submission
 
   for(int idx = 0; idx < requests->num_reqs; idx++) {
     free_sampler(&samplers[idx]);
   }
 
-  gen_cnt = 0;
-  for(int fid = 0; fid < n_flows; ++fid)
-    gen_cnt += gen_cnt_flow[fid];
+  for(int fid = 0; fid < n_host_threads; ++fid)
+    gen_cnt += gen_cnt_host_thread[fid];
   fprintf(stderr, "\ngen_cnt: %d\n", gen_cnt);
 
   return gen_cnt;
@@ -986,10 +1594,24 @@ int main(int argc, char *argv[]) {
     // {
     long start, end;
     start = time_in_ms();
-    int num_gen_tokens = test(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    int num_gen_tokens;
+    // if (transformer.config.n_layers <= 32)
+      // num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    // else
+
+    // if (transformer.config.n_layers == 80)
+    //   num_gen_tokens = test_70B(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    // if (transformer.config.n_layers == 40)
+    //   num_gen_tokens = test_pipeline_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    // if (transformer.config.n_layers < 40)
+    //   num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+
+    num_gen_tokens = test_data_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
+    // num_gen_tokens = test_pipeline_parallelism(&transformer, &tokenizer, tokenizer_path, &requests, batch);
     end = time_in_ms();
 
     // Your goal is to achieve best throughput(=reduce elapsed time)! 
+    fprintf(stdout, "Total achieved token: %d\n", num_gen_tokens);
     fprintf(stdout, "elapsed time(s): %f, achieved throughput(tok/s): %f\n", (double)(end-start)/1000, (num_gen_tokens) / (double)(end-start)*1000);
     //}
 

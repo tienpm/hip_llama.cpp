@@ -1,4 +1,5 @@
 #include "thaDNN/thaDNN_rmsnorm.hpp"
+#include <omp.h>
 
 #define ROUND_UP(N, S)((N + S - 1)/ S)
 
@@ -43,17 +44,19 @@ __global__ void thaDNN_s_rope_kernel(int dim, int head_size, int kv_dim, int pos
 // _s_ = single persion (float)
 // input: q, k allocated on device
 // [dim] % 2 = 0
-thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) {
-    if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr || handle.current_gpu_id < 0)
-    {
-        fprintf(stderr, "THABLAS RoPE_relative_positional_encoding ERROR: INVALID ARGUMENT\n");
-        return THABLAS_STATUS_ALLOC_FAILED;        
-    }
+thablasStatus_t thaDNN_s_rope(thablasHandle_t* handle, int dim, int head_size, int kv_dim, int pos, float *q, float *k) {
+    // if (dim==0 || head_size==0 || kv_dim==0 || q == nullptr || k == nullptr || handle.current_gpu_id < 0)
+    // {
+    //     fprintf(stderr, "THABLAS RoPE_relative_positional_encoding ERROR: INVALID ARGUMENT\n");
+    //     return THABLAS_STATUS_ALLOC_FAILED;        
+    // }
 
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim(ROUND_UP(dim, 128));
-    hipLaunchKernelGGL(thaDNN_s_rope_kernel, gridDim, blockDim, 0, 0, dim, head_size, kv_dim, pos, q, k);
+    hipLaunchKernelGGL(thaDNN_s_rope_kernel, 
+                       gridDim, blockDim, 0, handle->calc_stream, 
+                       dim, head_size, kv_dim, pos, q, k);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;

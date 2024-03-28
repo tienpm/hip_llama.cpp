@@ -1,4 +1,5 @@
 #include "thaDNN/thaDNN_swiglu.hpp"
+#include <omp.h>
 
 // '_s_' = single persion (float)
 __global__ void thaDNN_s_swiglu_kernel(float* hb, float*hb2, int hidden_dim) {
@@ -15,7 +16,7 @@ __global__ void thaDNN_s_swiglu_kernel(float* hb, float*hb2, int hidden_dim) {
 
 // '_s_' = single prisesion
 // input: hb, hb2 allocated on device
-thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, int hidden_dim) {
+thablasStatus_t thaDNN_s_swiglu(thablasHandle_t* handle, float *hb, float *hb2, int hidden_dim) {
     // if (hidden_dim==0 || hb == nullptr || hb2 == nullptr || handle.current_gpu_id < 0)
     // {
     //     printf("THABLAS SwiGLU_non_linearity ERROR: INVALID ARGUMENT\n"); fflush(stdout);
@@ -25,7 +26,9 @@ thablasStatus_t thaDNN_s_swiglu(thablasHandle_t handle, float *hb, float *hb2, i
     // CHECK_HIP(hipSetDevice(handle.current_gpu_id));
     dim3 blockDim(64);
     dim3 gridDim((hidden_dim + blockDim.x - 1) / blockDim.x);
-    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, gridDim, blockDim, 0, 0, hb, hb2, hidden_dim);
+    hipLaunchKernelGGL(thaDNN_s_swiglu_kernel, 
+                       gridDim, blockDim, 0, handle->calc_stream, 
+                       hb, hb2, hidden_dim);
     // CHECK_HIP(hipGetLastError());
 
     return THABLAS_STATUS_SUCCESS;
