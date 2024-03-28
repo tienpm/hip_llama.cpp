@@ -33,7 +33,7 @@ make
 
 ## Contributing
 
-- The project is private. We will open source it in the future, if allowed. If you have some issues or feature requests, please let us know by email of contributors bellow.
+- If you have some issues or feature requests, please open issues or let us know by email of contributors bellow.
 
 ## License
 
@@ -41,11 +41,11 @@ make
 
 ## Contributers
 
-| Full Name        | Email                     | ID     |
-| ---------------- | ------------------------- | ------ |
-| Pham Manh Tien   | tien.pham@moreh.com.vn    | getp16 |
-| Nguyen Huy Hoang | hoang.nguyen@moreh.com.vn | getp11 |
-| Nguyen Xuan Anh  | anh.nguyen@moreh.com.vn   | getp15 |
+| Full Name        | Email                     |
+| ---------------- | ------------------------- |
+| Pham Manh Tien   | tienpmuit@gmail.com       |
+| Nguyen Huy Hoang | hoang.nguyen@moreh.com.vn |
+| Nguyen Xuan Anh  | xuananhbka@gmail.com      |
 
 ## Acknowledgments
 
