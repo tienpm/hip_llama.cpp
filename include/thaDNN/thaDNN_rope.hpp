@@ -2,7 +2,7 @@
 #include "thaBLAS.hpp"
 
 
-thablasStatus_t thaDNN_s_rope(thablasHandle_t handle, 
+thablasStatus_t thaDNN_s_rope(thablasHandle_t* handle, 
                               int dim, 
                               int head_size, 
                               int kv_dim, 
