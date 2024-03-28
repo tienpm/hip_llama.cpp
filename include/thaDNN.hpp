@@ -68,6 +68,13 @@ typedef enum
 
 thablasStatus_t thaDNN_s_forward_batch(thablasHandle_t handle1, thablasHandle_t handle2, thablasHandle_t handle3, int n_batches, Config *p, TransformerWeights* w, RunState* s_batch, int token[], int pos[], float* logits_host);
 
+// thablasStatus_t thaDNN_s_forward_70B(thablasHandle_t handle, int batch_size, Config *p, TransformerWeights* h_w, RunState* h_s, TransformerWeights* d_w, RunState* s_batch, int token[], int pos[], float* logits_host);
+thablasStatus_t thaDNN_s_forward_70B(thablasHandle_t handle, int batch_size, Config *p, TransformerWeights* h_w[], RunState* h_s, TransformerWeights* d_w, RunState* d_s, int token[], int pos[], float* logits_host);
+
 thablasStatus_t thaDNN_s_forward_batch_pipe_line(thablasHandle_t handle[], int n_devices, int n_batches, Transformer* transformer_d[], int token[], int pos[], float* logits_host);
 
 thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line(thablasHandle_t handle[], int host_thread_id, int n_host_threads, int n_devices, int batch_size, Config* p, TransformerWeights* w[], RunState* s_batch[], int token[], int pos[], float* logits_host, int* host_thread_status, int* device_host_thread, omp_lock_t *device_mtx);
+
+thablasStatus_t thaDNN_s_forward_batch_multiple_pipe_line_layer_swap(thablasHandle_t handle[], int thread_id, int n_host_threads, int n_devices, int batch_size, int n_buffer_words, 
+                                                                     Config* p, TransformerWeights* w[], RunState* s_batch[], RunState* s_host_batch[], int token[], int pos[], 
+                                                                     float* logits_host, omp_lock_t *device_locks);                                                               
